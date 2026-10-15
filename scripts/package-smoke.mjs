@@ -25,7 +25,8 @@ function run(command, args, cwd = workspace) {
 }
 const extension = join(workspace, "trusted extension.ts");
 const verification = `import assert from "node:assert/strict";
-import { access } from "node:fs/promises";
+import { access, mkdir, symlink } from "node:fs/promises";
+import { join } from "node:path";
 import { BACKGROUND_CONTEXT as context } from "@earendil-works/chord/context";
 import { createModels } from "@earendil-works/pi-ai/models";
 import { fauxAssistantMessage, fauxProvider, fauxToolCall } from "@earendil-works/pi-ai/providers/faux";
@@ -34,7 +35,9 @@ import { Resources } from "./dist/resources.js";
 import { openPersistentChat } from "./dist/session.js";
 const [extension, workspace, session, config] = process.argv.slice(2);
 const resources = new Resources(config, [], workspace);
-const registry = await codingRegistry(resources, [extension]);
+await mkdir(join(config, "extensions"), { recursive: true });
+await symlink(extension, join(config, "extensions", "install-probe.ts"));
+const registry = await codingRegistry(resources, await resources.extensionPaths([extension]));
 const faux = fauxProvider({ tokensPerSecond: 100000 });
 faux.appendResponses([fauxAssistantMessage(fauxToolCall("install_probe", {}), { stopReason: "toolUse" }), fauxAssistantMessage("Verified offline.")]);
 const models = createModels(); models.setProvider(faux.provider);
@@ -94,7 +97,7 @@ export default defineExtension({ name: "install-probe", sections: [section("inst
     assert.equal(readFileSync(join(installed, "LICENSE"), "utf8"), readFileSync(join(root, "LICENSE"), "utf8"));
     const requireEntry = join(installed, "package-verification.mjs");
     writeFileSync(requireEntry, verification);
-    run(process.execPath, ["--disable-warning=ExperimentalWarning", requireEntry, extension, workspace, join(workspace, global ? "global.sqlite" : "local.sqlite"), join(workspace, "config")]);
+    run(process.execPath, ["--disable-warning=ExperimentalWarning", requireEntry, extension, workspace, join(workspace, global ? "global.sqlite" : "local.sqlite"), join(workspace, global ? "global-config" : "local-config")]);
     assert(!existsSync(join(workspace, global ? "global.sqlite.lock" : "local.sqlite.lock")));
     // Includes real fullscreen demo, local commands, saved-session/auth gate and terminal restoration.
     run("python3", [join(root, "scripts/terminal-smoke.py"), launcher]);

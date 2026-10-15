@@ -1,5 +1,6 @@
 """Credential-free smoke test of the real ProcessTerminal in a POSIX PTY."""
 import fcntl
+import json
 import os
 from pathlib import Path
 import pty
@@ -175,3 +176,83 @@ with tempfile.TemporaryDirectory(prefix="pi-d-managed-") as directory:
             os.close(master)
             os.close(slave)
     print("PTY passed: command completion, context meter, /status, managed creation/handoff, workspace resume and private lock-free shutdown.")
+
+# Global code is trusted only in the user's config directory. Verify actual CLI
+# wiring, opt-out, canonical-path deduplication and project isolation in a PTY.
+with tempfile.TemporaryDirectory(prefix="pi-d-extension-startup-") as directory:
+    base = Path(directory).resolve()
+    workspace = base / "workspace"
+    workspace.mkdir()
+    extensions = base / "config/pi-d/extensions"
+    extensions.mkdir(parents=True)
+    extensions.parent.chmod(0o700)  # The credential-store parent must remain private.
+    automatic_marker, explicit_marker = base / "automatic.loaded", base / "explicit.loaded"
+
+    def fixture(name, marker):
+        return (f'import {{ appendFileSync }} from "node:fs"; '
+                f'appendFileSync({json.dumps(str(marker))}, "loaded"); '
+                f'export default {{ name: {json.dumps(name)} }};')
+
+    automatic = extensions / "automatic.mjs"
+    automatic.write_text(fixture("automatic-probe", automatic_marker))
+    alias = extensions / "alias.mjs"
+    alias.symlink_to(automatic)
+    explicit = base / "explicit.mjs"
+    explicit.write_text(fixture("explicit-probe", explicit_marker))
+    project = workspace / ".pi-d/extensions"
+    project.mkdir(parents=True)
+    (project / "must-not-load.mjs").write_text('throw new Error("PROJECT_EXTENSION_EXECUTED");')
+    environment = {**os.environ, "HOME": str(base), "TERM": "xterm-256color", "COLORTERM": "truecolor",
+                   "XDG_CONFIG_HOME": str(base / "config"), "XDG_DATA_HOME": str(base / "data")}
+    for option in ["--help", "--list-models"]:
+        result = subprocess.run([launcher, option], cwd=workspace, env=environment, capture_output=True, timeout=10)
+        assert result.returncode == 0, result.stderr
+        assert not automatic_marker.exists()
+    for mode, options, expected in [
+        ("automatic", [], "automatic-probe"),
+        ("deduplicated", ["--extension", str(automatic), "--extension", str(alias)], "automatic-probe"),
+        ("disabled", ["--no-extensions"], None),
+        ("explicit", ["--no-extensions", "--extension", str(explicit)], "explicit-probe"),
+        ("demo", ["--demo"], None),
+    ]:
+        automatic_marker.unlink(missing_ok=True)
+        explicit_marker.unlink(missing_ok=True)
+        master, slave = pty.openpty()
+        fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 30, 110, 0, 0))
+        original = termios.tcgetattr(slave)
+        captured = bytearray()
+        arguments = [launcher, *options, "--no-animation"]
+        if mode != "demo":
+            arguments.extend(["--session", f"./{mode}.sqlite"])
+        process = subprocess.Popen(arguments, cwd=workspace, stdin=slave, stdout=slave, stderr=slave, env=environment)
+        try:
+            wait_for(b"ready" if mode == "demo" else b"ChatGPT is not connected")
+            os.write(master, b"/extensions\r")
+            wait_for(b"Selected Durable extensions")
+            if expected:
+                wait_for(expected.encode())
+            assert automatic_marker.exists() == (expected == "automatic-probe"), mode
+            assert explicit_marker.exists() == (expected == "explicit-probe"), mode
+            for marker in [automatic_marker, explicit_marker]:
+                if marker.exists():
+                    assert marker.read_text() == "loaded", "Extension executed more than once"
+            start = len(captured)
+            os.write(master, b"\x1b")
+            wait_for(b"Cancelled", start)
+            os.write(master, b"\x03")
+            deadline = time.monotonic() + 5
+            while process.poll() is None and time.monotonic() < deadline:
+                if select.select([master], [], [], 0.05)[0]:
+                    captured.extend(os.read(master, 65536))
+            assert process.poll() == 0, (mode, bytes(captured[-2000:]))
+            restored = termios.tcgetattr(slave)
+            assert restored[3] & (termios.ICANON | termios.ECHO) == original[3] & (termios.ICANON | termios.ECHO)
+            assert b"PROJECT_EXTENSION_EXECUTED" not in captured
+            assert not (base / "config/pi-d/auth.json").exists()
+        finally:
+            if process.poll() is None:
+                process.kill()
+                process.wait()
+            os.close(master)
+            os.close(slave)
+    print("PTY passed: global XDG extension discovery, explicit additions, symlink deduplication, --no-extensions, demo isolation and no project execution.")

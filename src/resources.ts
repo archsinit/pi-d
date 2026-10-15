@@ -32,12 +32,44 @@ export async function loadAgents(cwd: string, configDir: string) {
   return files;
 }
 
+async function optionalStat(path: string) {
+  try { return await stat(path); }
+  catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined; throw error; }
+}
+
 export class Resources {
   readonly configDir: string;
   readonly skillPaths: string[];
   private readonly home: string;
   constructor(configDir: string, skillPaths: string[] = [], home = homedir()) {
     this.configDir = configDir; this.skillPaths = skillPaths.map(expandPath); this.home = home;
+  }
+
+  /** Only the user-controlled config directory is executable by default, never a project. */
+  async extensionPaths(paths: string[] = [], autoDiscover = true): Promise<string[]> {
+    const files: string[] = [];
+    if (autoDiscover) {
+      const root = join(this.configDir, "extensions");
+      let names: string[];
+      try { names = await readdir(root); }
+      catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; names = []; }
+      for (const name of names.sort()) {
+        if (name.startsWith(".") || name === "node_modules") continue;
+        const path = join(root, name), info = await optionalStat(path);
+        if (info?.isFile() && /\.(?:ts|[cm]?js)$/.test(name) && !name.endsWith(".d.ts")) files.push(path);
+        else if (info?.isDirectory()) {
+          // One entry point per extension; helpers are not scanned recursively.
+          for (const entry of ["index.ts", "index.js", "index.mjs", "index.cjs"]) {
+            const candidate = join(path, entry);
+            if ((await optionalStat(candidate))?.isFile()) { files.push(candidate); break; }
+          }
+        }
+      }
+    }
+    const canonical = new Set<string>();
+    // Resolve symlinks before loading so relative imports use the source directory.
+    for (const path of [...files, ...paths.map(expandPath)]) canonical.add(await realpath(path));
+    return [...canonical];
   }
 
   async skills(cwd: string): Promise<{ skills: Skill[]; diagnostics: string[] }> {

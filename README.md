@@ -92,7 +92,7 @@ pi-d uses Durable's APIs and execution model. Matching every [pi](https://pi.dev
 | Context management | Automatic threshold/overflow compaction; manual `/compact` | Automatic background context compaction via Durable; can overlap chat |
 | Sessions | `/new`, tree/fork/clone, session picker | Separate databases via `/session-new`; `/new` resets current context |
 | Busy input | Enter steers; Alt+Enter follows up | `/steer` and `/followup`; ordinary Enter keeps the draft |
-| Extensions | Pi `ExtensionAPI`, discovery, packages and reload | Explicit Durable Extension objects; restart to reload |
+| Extensions | Pi `ExtensionAPI`, discovery, packages and reload | Durable Extension objects; global config discovery and explicit files; restart to reload |
 | Resources and integrations | Settings, providers, templates, themes, packages and built-in MCP | AGENTS, skills, pinned catalog and a fixed design; integrations need trusted Durable extensions |
 | Automation and history | Print/JSON/RPC/SDK, branching, export/import/share | Interactive chat; no archive browser, headless modes or export/import/share |
 
@@ -100,7 +100,9 @@ The [full comparison](docs/comparison.md) covers commands, authentication, tools
 
 ## Data and safety
 
-Credentials and global instructions/skills live in `~/.config/pi-d/`. Conversations live in `~/.local/share/pi-d/`. Absolute `XDG_CONFIG_HOME` and `XDG_DATA_HOME` replace those bases. Credentials are plaintext private files, separate from session databases. pi-d does not import Pi's credentials, settings or conversations.
+Credentials, global instructions/skills and trusted extensions live in `~/.config/pi-d/`. Conversations live in `~/.local/share/pi-d/`. Absolute `XDG_CONFIG_HOME` and `XDG_DATA_HOME` replace those bases. Credentials are plaintext private files, separate from session databases. pi-d does not import Pi's credentials, settings or conversations.
+
+Place trusted extension files or folders with an `index.ts` / `index.js` / `index.mjs` / `index.cjs` entry point in `~/.config/pi-d/extensions/` to load them automatically from any workspace. `--no-extensions` disables automatic loading; `--extension path` still adds explicit files. Project extension folders are not auto-loaded. See the [extension guide](docs/extensions.md) for trust and discovery rules.
 
 **Recovery can repeat model requests and consume quota or incur charges.** Cancelling a task does not undo file or shell effects. Missing login or recovery extensions keeps work paused; use `/status` to inspect it.
 

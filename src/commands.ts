@@ -162,7 +162,7 @@ export function chatCommands(chat: ChatHandle, models: Models, resources?: Resou
       return;
     }
     if (command === "extensions") {
-      await showDialog(ui.tui, new Dialog(ui.tui, "Selected Durable extensions:\n" + (await chat.conversation.agent(context)).extensions.map((extension) => `${extension.name}: ${(extension.tools ?? []).map((tool) => tool.name).join(", ") || "sections/hooks/tasks"}`).join("\n") + "\n\nLoad trusted files with --extension path; restart after code changes."), signal);
+      await showDialog(ui.tui, new Dialog(ui.tui, "Selected Durable extensions:\n" + (await chat.conversation.agent(context)).extensions.map((extension) => `${extension.name}: ${(extension.tools ?? []).map((tool) => tool.name).join(", ") || "sections/hooks/tasks"}`).join("\n") + "\n\nTrusted global extensions load from the config extensions/ directory; --extension adds files. Restart after code changes."), signal);
       return;
     }
     if (command === "skills" || command.startsWith("skill:")) {

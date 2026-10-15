@@ -28,7 +28,8 @@ Usage: pi-d [options]
   --new-session          Create a separate managed session for the launch workspace
   --resume               Choose a saved session for the launch workspace
   --cwd path             Change the saved workspace while idle (default: launch directory)
-  --extension path       Load a trusted Durable Extension (repeatable; full account access)
+  --extension path       Add a trusted Durable Extension (repeatable; full account access)
+  --no-extensions        Disable automatic extension discovery; explicit files still load
   --skill path           Add a skill file/directory (repeatable)
   --list-models          List the pinned chat catalog without authentication
   --no-animation         Disable activity animation
@@ -39,6 +40,7 @@ No selector keeps the existing shared default.sqlite; it is never silently migra
 Sessions: $XDG_DATA_HOME/pi-d or ~/.local/share/pi-d; managed sessions live under sessions/.
 OpenAI uses ChatGPT subscription login only, never OPENAI_API_KEY.
 Credentials: $XDG_CONFIG_HOME/pi-d/auth.json or ~/.config/pi-d/auth.json (plaintext, 0600).
+Extensions: auto-loaded from the config directory's extensions/; no project code discovery.
 Other providers use environment keys (e.g. ANTHROPIC_API_KEY). Pi credentials are not read.
 In-app: /new /clear /session-new [name] /resume /status /login /logout /model /reasoning
         /skills /skill:name /extensions /steer text /followup text /interrupt /queue /withdraw [id] /help
@@ -58,6 +60,7 @@ async function main(): Promise<void> {
     model: { type: "string" }, thinking: { type: "string" }, session: { type: "string" }, cwd: { type: "string" },
     "new-session": { type: "boolean" }, resume: { type: "boolean" },
     extension: { type: "string", multiple: true }, skill: { type: "string", multiple: true },
+    "no-extensions": { type: "boolean" },
     "list-models": { type: "boolean" }, "no-animation": { type: "boolean" },
   } });
   if (values.help) { console.log(help); return; }
@@ -97,7 +100,7 @@ async function main(): Promise<void> {
     app?.ui.stop(); console.error(`pi-d: Session ownership lost: ${errorText(error)}`); process.exit(1);
   };
   const resources = values.demo ? undefined : new Resources(dirname(credentialFile()), values.skill);
-  const registry = resources ? await codingRegistry(resources, values.extension, report) : undefined;
+  const registry = resources ? await codingRegistry(resources, await resources.extensionPaths(values.extension, !values["no-extensions"]), report) : undefined;
   const cwd = resources ? await workspacePath(values.cwd ?? process.cwd()) : undefined;
   const catalog = new SessionCatalog();
   const open = async (file: string, settings: Pick<Parameters<typeof openPersistentChat>[2], "model" | "thinkingLevel" | "cwd" | "defaultCwd"> = {}): Promise<ChatHandle> => {

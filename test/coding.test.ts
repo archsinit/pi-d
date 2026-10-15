@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -58,7 +58,7 @@ test("actual stock coding tools edit a temporary workspace and show committed li
   } finally { await app.close(); terminal.dispose(); await rm(directory, { recursive: true, force: true }); }
 });
 
-test("trusted external TypeScript extensions import the host SDK and execute through native tools across reopen", { timeout: 10000 }, async () => {
+test("global TypeScript extensions import the host SDK, deduplicate explicit paths and execute through native tools across reopen", { timeout: 10000 }, async () => {
   const directory = await mkdtemp(join(tmpdir(), "pi-d-extension-")), extensionPath = join(directory, "outside extension.ts");
   await writeFile(extensionPath, `import { defineExtension, defineTool, GenerationTask, hook, section } from "@earendil-works/pi-durable";
 import { Type } from "@earendil-works/pi-ai";
@@ -66,6 +66,8 @@ import { fauxText } from "@earendil-works/pi-ai/providers/faux";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 export default defineExtension({ name: "fixture-extension", hooks: [hook(GenerationTask, { beforeRequest: async ({ messages }) => ({ messages: [...messages, { role: "user", content: "EXTENSION HOOK INSTRUCTIONS", timestamp: 0 }] }) })], sections: [section("fixture_instructions", () => "EXTENSION SYSTEM INSTRUCTIONS")], tools: [defineTool({ name: "fixture_tool", description: "Fixture tool", parameters: Type.Object({}), execute: async (_args, api) => ({ output: [fauxText("EXTENSION RESULT " + (await api.agent(BACKGROUND_CONTEXT)).cwd)] }) })] });`);
   const resources = new Resources(join(directory, "config"), [], directory), cwd = await workspacePath(directory);
+  await mkdir(join(resources.configDir, "extensions"), { recursive: true });
+  await symlink(extensionPath, join(resources.configDir, "extensions", "fixture.ts"));
   const { models } = testModels({ responses: [0, 1, 2, 3].map((index) => async (transcript) => {
     assert.match(JSON.stringify(transcript.messages), /EXTENSION HOOK INSTRUCTIONS/);
     return index % 2 === 0 ? call("fixture_tool", {}) : fauxAssistantMessage("Done.");
@@ -73,7 +75,7 @@ export default defineExtension({ name: "fixture-extension", hooks: [hook(Generat
   let chat: Awaited<ReturnType<typeof openPersistentChat>> | undefined;
   try {
     for (let i = 0; i < 2; i++) {
-      const registry = await codingRegistry(resources, [extensionPath]);
+      const registry = await codingRegistry(resources, await resources.extensionPaths(i === 0 ? [extensionPath] : []));
       chat = await openPersistentChat(join(directory, "session.sqlite"), models, { defaults: { model }, registry, env: codingEnv, defaultCwd: cwd, onLockLost: lockLost });
       chat.harness.resume();
       const input = await chat.conversation.submit({ type: "input", content: "Use the extension." }, context);

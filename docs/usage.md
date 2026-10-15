@@ -184,13 +184,17 @@ pi-d --skill ~/.pi/agent/skills  # explicit reuse, not Pi config/runtime loading
 pi-d --extension ./trusted-extension.ts
 ```
 
-Relative `--skill` and `--extension` paths resolve from the shell's launch directory, not the saved workspace or `--cwd`. Use absolute paths when reopening from elsewhere. Normal instruction/skill discovery has no disable flags or project-trust prompt.
+Relative `--skill` and `--extension` paths resolve from the shell's launch directory, not the saved workspace or `--cwd`. Use absolute paths when reopening from elsewhere. Normal instruction/skill discovery has no disable flags or project-trust prompt; `--no-extensions` disables automatic executable-extension discovery only.
 
 ### Durable extensions
 
-See the [extension guide](extensions.md) for a complete example. Files must default-export named Durable Extension objects; Pi factories do not work. Loading a file executes its module code with full account permissions. Tools, sections, hooks, wrappers and tasks use the unchanged registry. Names must be unique and cannot replace `coding-tools` or `pi-d-prompt`.
+Normal chat startup automatically loads trusted extensions from `~/.config/pi-d/extensions/`, or `$XDG_CONFIG_HOME/pi-d/extensions/` when the XDG base is absolute. Top-level `.ts`, `.js`, `.mjs` and `.cjs` files are loaded in name order. Child directories load the first entry point among `index.ts`, `index.js`, `index.mjs`, `index.cjs`. Hidden entries, `.d.ts`, `node_modules` and deeper directories are not scanned. Symlinks are supported. Project extension directories and `~/.pi/agent` are never auto-loaded.
 
-`--extension` is repeatable. Restart after code changes and retain the same trusted files for recovery. The `pi-d.loaded-extensions` document stores names, never executable paths. Missing prior extensions or task definitions keeps unfinished work paused; `/status` identifies them. An idle reopen can omit extensions. Names do not prove code-version compatibility, and older stores may not record them.
+See the [extension guide](extensions.md) for complete examples and discovery rules. Files must default-export named Durable Extension objects; Pi factories do not work. Placing code in the global extensions directory trusts it to execute with full account permissions. Tools, sections, hooks, wrappers and tasks use the unchanged registry. Names must be unique and cannot replace `coding-tools` or `pi-d-prompt`.
+
+`--extension` is repeatable and adds files after global entries. Canonical file paths are deduplicated before loading. `--no-extensions` skips automatic discovery but still loads explicit `--extension` files. Help, model listing, login/logout and the offline demo never load extensions. Invalid discovered extensions fail startup rather than being silently ignored.
+
+Restart after code changes and keep the same trusted files globally available or explicitly supplied for recovery. The `pi-d.loaded-extensions` document stores names, never executable paths. Missing prior extensions or task definitions keeps unfinished work paused; `/status` identifies them. An idle reopen can omit extensions. Names do not prove code-version compatibility, and older stores may not record them.
 
 pi-d supplies no executable project-extension discovery, package installer, hot reload, Pi UI/command/provider facade or module-level shutdown callback. Manage resources inside invocations, honor cancellation, and avoid unmanaged processes, sockets, watchers or timers at module scope.
 

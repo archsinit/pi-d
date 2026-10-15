@@ -21,7 +21,7 @@ export async function recoveryStatus(chat: ChatHandle) {
 export async function requireRecoveryReady(chat: ChatHandle): Promise<void> {
   const { inspection, missing, blocked } = await recoveryStatus(chat);
   if (blocked.length || (missing.length && (inspection.tasks.length || inspection.submissions.length))) {
-    throw new Error(`Recovery is blocked${missing.length ? `; missing extensions: ${missing.join(", ")}` : ""}. Use /status; restart with the same trusted --extension files, or /interrupt to stop foreground work.`);
+    throw new Error(`Recovery is blocked${missing.length ? `; missing extensions: ${missing.join(", ")}` : ""}. Use /status; restore the trusted extensions in the config extensions/ directory or with --extension, or /interrupt to stop foreground work.`);
   }
 }
 
@@ -58,6 +58,6 @@ export async function sessionStatus(chat: ChatHandle, models: Models): Promise<s
     "\nLive tasks:", ...inspection.tasks.map(taskText),
     ...(inspection.tasks.length ? [] : ["none"]),
     "\nOpening a session can replay model requests. /interrupt stops foreground work and withdraws queued inputs; background work survives. File effects are not undone.",
-    ...(missing.length ? ["Extensions must be supplied explicitly with --extension; stored names never execute code."] : []),
+    ...(missing.length ? ["Restore trusted extensions in the config extensions/ directory or with --extension; stored names never execute code."] : []),
   ].join("\n");
 }

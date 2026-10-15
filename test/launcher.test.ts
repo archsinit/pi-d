@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, readdirSync, rmSync, symlinkSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { delimiter, dirname, join } from "node:path";
 import test from "node:test";
@@ -27,6 +27,20 @@ test("user-bin launcher resolves its checkout, forwards arguments and exit statu
     assert.equal(invalid.status, 1, invalid.stderr || String(invalid.error));
     assert.match(invalid.stderr, /cannot be combined/);
     assert.deepEqual(readdirSync(directory), ["pi-d"]);
+    const extensions = join(directory, "config", "pi-d", "extensions");
+    mkdirSync(extensions, { recursive: true });
+    writeFileSync(join(extensions, "must-not-run.mjs"), 'throw new Error("GLOBAL_EXTENSION_EXECUTED");');
+    for (const args of [["--help"], ["--list-models"], ["--no-extensions", "--help"]]) {
+      const result = run(...args);
+      assert.equal(result.status, 0, result.stderr || String(result.error));
+      assert.equal(result.stderr, "");
+    }
+    const login = run("--login");
+    assert.equal(login.status, 1); assert.match(login.stderr, /interactive terminal/);
+    const disabled = run("--no-extensions");
+    assert.equal(disabled.status, 1); assert.match(disabled.stderr, /interactive terminal/);
+    assert(!login.stderr.includes("GLOBAL_EXTENSION_EXECUTED"));
+    assert(!disabled.stderr.includes("GLOBAL_EXTENSION_EXECUTED"));
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }

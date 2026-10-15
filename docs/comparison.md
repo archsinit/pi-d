@@ -26,7 +26,7 @@ conversation watch ── pi-d presentation ── pi-tui terminal components
 
 | Source | Responsibility |
 | --- | --- |
-| `src/cli.ts`, `bin/pi-d.mjs` | Options, launcher, startup, explicit extensions and shutdown |
+| `src/cli.ts`, `bin/pi-d.mjs` | Options, launcher, startup, global/explicit extensions and shutdown |
 | `src/session.ts`, `src/sessions.ts` | SQLite opening, ownership locks, saved settings/workspace and session discovery |
 | `src/chat.ts` | Input admission, committed-state watch, recovery checks and session handoff |
 | `src/ui.ts`, `src/transcript.ts`, `src/theme.ts`, `src/dialog.ts` | Frames, editor, dialogs, role styling, streaming display, committed edit patches and footer |
@@ -99,11 +99,11 @@ Neither runtime promises exactly-once model requests or external effects.
 | Other providers | Stored credentials, environment and provider-supported ambient auth | pi-ai environment/ambient authentication; no API-key storage, other OAuth login UI or automatic Pi credential import |
 | Credential location | Agent directory, normally `~/.pi/agent/auth.json` | XDG config `pi-d/auth.json` or `~/.config/pi-d/auth.json`; private plaintext files, atomic mutation and cross-process refresh locking |
 | Configuration | User/project settings, themes, keybindings, SYSTEM/APPEND_SYSTEM files and environment controls | CLI flags, saved agent settings, AGENTS and skills. Does not read Pi settings/auth/history or `.pi/SYSTEM.md`/`APPEND_SYSTEM.md` |
-| Resource opt-outs | `--no-context-files`, `--no-skills`, `--no-extensions` and related flags | No discovery-disable flags. Coding instructions and skill discovery are enabled; executable extensions need explicit flags |
+| Resource opt-outs | `--no-context-files`, `--no-skills`, `--no-extensions` and related flags | `--no-extensions` skips automatic global extension loading but preserves explicit files. No instruction/skill discovery-disable flags |
 | Coding prompt | Pi's standard prompt plus resource/runtime contributions | Adapted Pi 1.2.0 coding preamble, tool rules and skill wording, with pi-d identity and Durable guidance. Sections prepare before every request, including tool continuations and after compaction |
 | AGENTS | Global/ancestor files, per-directory overrides, linked-worktree handling, explicit reload | Same filenames, override precedence and ancestor order, with a separate global directory. Rereads every preparation; no linked-worktree shadowing or subdirectory crawl |
 | Skills | Agent Skills, conventional/configured/package roots and ignore-file filtering | YAML `name`/`description`/`disable-model-invocation`, lazy instructions and `/skill:name`. pi-d roots, shared `.agents`, workspace `.pi/skills` and repeatable `--skill`; no Pi package/glob/ignore-file system |
-| Trust | Project trust gates most project settings/resources; not a sandbox or tool approval | No trust database/dialog. Extensions require explicit trusted flags; ancestor instructions and discovered skills load without a prompt and can steer full-access tools |
+| Trust | Project trust gates most project settings/resources; not a sandbox or tool approval | No trust database/dialog. User-config extensions auto-load; project extensions require explicit trusted flags. Ancestor instructions and discovered skills load without a prompt and can steer full-access tools |
 
 See [Usage and safety](usage.md) for discovery order, paths, authentication, recovery and commands. Reviewed Pi skill files can be reused, but Pi extensions and saved sessions are not portable to pi-d.
 
@@ -113,7 +113,7 @@ See [Usage and safety](usage.md) for discovery order, paths, authentication, rec
 | --- | --- | --- |
 | Extension format | Default factory receiving Pi's `ExtensionAPI` | Default-exported Durable `Extension` object with tools, sections, hooks, wrappers and tasks. Pi factories do not work |
 | Extension capabilities | Commands, shortcuts, CLI flags, UI/renderers/widgets, providers, events and session control | Durable registry contracts; no Pi-style command/UI/provider registration or session lifecycle facade |
-| Discovery/reload | Personal/project/configured/package extensions, trust gates and `/reload` | Repeatable `--extension file` only. jiti loads TS/JS with pinned host SDKs. Restart after code changes; retain trusted flags for recovery. Stored names never execute paths |
+| Discovery/reload | Personal/project/configured/package extensions, trust gates and `/reload` | Global config `extensions/` discovery plus repeatable `--extension file`; `--no-extensions` opts out of discovery. No project auto-loading. jiti loads TS/JS with pinned host SDKs. Restart after code changes; keep trusted files available for recovery. Stored names never execute paths |
 | Lifecycle | Session start/shutdown events and reload contracts | Cancellation and cleanup through invocation/task contexts. No module-level shutdown callback; extension authors manage module resources |
 | Packages/templates | npm/git Pi packages and parameterized Markdown prompt templates | No package installer, package configuration or template system. Skills/sections can supply instructions without template compatibility |
 | MCP | Built-in stdio/HTTP connections, configuration, authentication and `/mcp` | No built-in client, configuration or UI; needs a trusted Durable integration |
