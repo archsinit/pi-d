@@ -43,7 +43,7 @@ Credentials: $XDG_CONFIG_HOME/pi-d/auth.json or ~/.config/pi-d/auth.json (plaint
 Extensions: auto-loaded from the config directory's extensions/; no project code discovery.
 Other providers use environment keys (e.g. ANTHROPIC_API_KEY). Pi credentials are not read.
 In-app: /new /clear /session-new [name] /resume /status /login /logout /model /reasoning
-        /skills /skill:name /extensions /steer text /followup text /interrupt /queue /withdraw [id] /help
+        /skills /skill:name /extensions /notifications /steer text /followup text /interrupt /queue /withdraw [id] /help
 /new and /clear reset active context without deleting stored history or the draft.
 Enter sends when idle · Tab completes commands/skills · Alt+Enter newline · Escape stops · Ctrl+C quits.
 Use /steer or /followup while busy; /interrupt stops foreground work and withdraws queued inputs.

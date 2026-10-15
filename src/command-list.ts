@@ -12,6 +12,7 @@ export const commands: SlashCommand[] = [
   { name: "reasoning", argumentHint: "[level]", description: "Select supported thinking" },
   { name: "skills", description: "List skills and diagnostics" },
   { name: "extensions", description: "List installed Durable extensions" },
+  { name: "notifications", description: "Inspect and dismiss pending UI notifications" },
   { name: "steer", argumentHint: "text", description: "Guide the current run after its tool round" },
   { name: "followup", argumentHint: "text", description: "Queue input for after the current run" },
   { name: "interrupt", description: "Stop foreground work and withdraw queued inputs (same as Escape)" },

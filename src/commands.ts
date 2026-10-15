@@ -76,6 +76,10 @@ export function chatCommands(chat: ChatHandle, models: Models, resources?: Resou
       if (argument) throw new Error("Use /status without arguments.");
       await showDialog(ui.tui, new Dialog(ui.tui, await sessionStatus(chat, models)), signal); return;
     }
+    if (command === "notifications") {
+      if (argument) throw new Error("Use /notifications without arguments.");
+      await ui.showNotifications(signal); return;
+    }
     if (command === "steer" || command === "followup") {
       if (!argument) throw new Error(`Use /${command} followed by the input to send.`);
       return { type: "input", content: raw, whenBusy: command === "steer" ? "steer" : "followUp" };

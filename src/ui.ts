@@ -4,6 +4,7 @@ import {
   type Component, type Focusable, type Terminal, type TuiMouseEvent,
 } from "@earendil-works/pi-tui";
 import { ExtensionToasts } from "./extension-presentation.ts";
+import { openNotifications } from "./notifications.ts";
 import type { ExtensionMessageOptions, ExtensionToastOptions, FooterStatus } from "./extensions.ts";
 import { editorTheme, fill, paint, rule, safeText, type Tone } from "./theme.ts";
 import { Transcript } from "./transcript.ts";
@@ -88,6 +89,7 @@ export class ChatUI {
   private extensionStatus: readonly FooterStatus[] = [];
   private readonly toasts: ExtensionToasts;
   private presentationStopped = false;
+  private notificationList: ReturnType<typeof openNotifications> | undefined;
 
   constructor(terminal: Terminal, options: { animate?: boolean; sessionLabel?: string } = {}) {
     this.animate = options.animate ?? true;
@@ -168,7 +170,16 @@ export class ChatUI {
     if (!this.presentationStopped) this.toasts.add(source, text, options);
   }
 
+  async showNotifications(signal: AbortSignal): Promise<void> {
+    if (this.presentationStopped) return;
+    if (this.notificationList) throw new Error("Notifications are already open.");
+    const list = this.notificationList = openNotifications(this.tui, this.toasts, signal);
+    try { await list.closed; }
+    finally { if (this.notificationList === list) this.notificationList = undefined; }
+  }
+
   clearExtensionPresentation(): void {
+    this.notificationList?.close(); this.notificationList = undefined;
     this.transcript.clearExtensionMessages();
     this.toasts.clear();
   }

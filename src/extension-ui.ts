@@ -37,11 +37,11 @@ export function extensionContext(owner: Owner, signal: AbortSignal): ChatExtensi
   return { harness: owner.harness, conversation: owner.conversation, signal, context: withAbortSignal(signal, BACKGROUND_CONTEXT) };
 }
 
-async function selected(owner: Owner, signal: AbortSignal): Promise<readonly ChatExtension[]> {
+async function selected(owner: Owner, signal: AbortSignal, validate = true): Promise<readonly ChatExtension[]> {
   signal.throwIfAborted();
   const extensions = (await owner.conversation.agent(withAbortSignal(signal, BACKGROUND_CONTEXT))).extensions;
   signal.throwIfAborted();
-  validateChatExtensions(extensions);
+  if (validate) validateChatExtensions(extensions);
   return extensions;
 }
 
@@ -87,13 +87,21 @@ export async function executeExtensionCommand(owner: Owner, name: string, argume
 
 function footerItems(value: unknown): readonly FooterStatus[] {
   if (value === undefined) return [];
-  if (!Array.isArray(value) || value.some((item) => !item || typeof item.text !== "string"
-    || (item.tone !== undefined && !tones.has(item.tone))
-    || (item.bold !== undefined && typeof item.bold !== "boolean")
-    || (item.strikethrough !== undefined && typeof item.strikethrough !== "boolean"))) {
-    throw new Error("Invalid footer status.");
+  if (!Array.isArray(value)) throw new Error("Invalid footer status.");
+  const items: FooterStatus[] = [];
+  for (let index = 0; index < value.length; index++) {
+    // Indexed validation must see holes; never pass provider objects/accessors/iterators to the renderer.
+    if (!Object.hasOwn(value, index)) throw new Error("Invalid footer status.");
+    const item = value[index];
+    if (!item || typeof item !== "object" || Array.isArray(item)) throw new Error("Invalid footer status.");
+    const { text, tone, bold, strikethrough } = item;
+    if (typeof text !== "string" || (tone !== undefined && !tones.has(tone))
+      || (bold !== undefined && typeof bold !== "boolean")
+      || (strikethrough !== undefined && typeof strikethrough !== "boolean")) throw new Error("Invalid footer status.");
+    const normalized = oneLine(text).trim();
+    if (normalized) items.push({ text: normalized, tone, bold, strikethrough });
   }
-  return value;
+  return items;
 }
 
 /** Mounted-session resources only. Callbacks run off the mutation line; custom session docs need no polling. */
@@ -103,11 +111,14 @@ export function watchExtensionFooter(owner: Owner, ui: ChatUI, report: (error: u
   let dirty = false, pending: Promise<void> | undefined, stopped: Promise<void> | undefined;
   const render = async () => {
     const items: FooterStatus[] = [];
-    for (const extension of await selected(owner, signal)) {
-      if (!extension.piD?.footer) continue;
+    // Declarations are validated at load; do not invoke provider accessors outside their boundary on refresh.
+    for (const extension of await selected(owner, signal, false)) {
       signal.throwIfAborted();
       try {
-        items.push(...footerItems(await extension.piD.footer(extensionContext(owner, signal))));
+        const provider = extension.piD?.footer;
+        if (provider === undefined) continue;
+        const contribution = footerItems(await provider.call(extension.piD, extensionContext(owner, signal)));
+        for (const item of contribution) items.push(item);
         failed.delete(extension.name);
       } catch {
         if (!signal.aborted && !failed.has(extension.name)) {

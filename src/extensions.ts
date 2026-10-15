@@ -18,7 +18,7 @@ export interface ExtensionMessageOptions {
   readonly type?: ExtensionMessageType;
 }
 export interface ExtensionToastOptions extends ExtensionMessageOptions {
-  /** Defaults to 5000 ms. Zero keeps the notification until the user dismisses it. */
+  /** Defaults to 5000 ms. Zero disables expiry. The host bounds pending notifications. */
   readonly timeoutMs?: number;
 }
 
@@ -31,7 +31,7 @@ export interface ChatCommandContext extends ChatExtensionContext {
    */
   message(text: string, options?: ExtensionMessageOptions): void;
   /**
-   * Queue a focus-free top-left notification; click × to dismiss. No model/context/storage effects.
+   * Queue a focus-free top-left notification; click × or use /notifications to dismiss. No model/context/storage effects.
    * Accepted output survives return; calls after completion/cancellation are ignored.
    */
   toast(text: string, options?: ExtensionToastOptions): void;
@@ -58,7 +58,7 @@ export interface FooterStatus {
 
 export interface ChatContributions {
   readonly commands?: readonly ChatCommand[];
-  /** Read-only, best-effort rendering on mount, native commits and local commands. No timers or effects here. */
+  /** Return a dense status array. Read-only, best-effort on mount, commits and local commands; no timers/effects. */
   readonly footer?: (context: ChatExtensionContext) => Awaitable<readonly FooterStatus[] | undefined>;
 }
 

@@ -13,7 +13,8 @@ import { codingRegistry } from "../src/coding.ts";
 import { chatCommands } from "../src/commands.ts";
 import { commandCompletion } from "../src/completion.ts";
 import { validateChatExtensions, watchExtensionFooter } from "../src/extension-ui.ts";
-import { defineChatExtension, type ChatCommandContext, type ChatExtension, type ChatExtensionContext } from "../src/extensions.ts";
+import { defineChatExtension, type ChatCommandContext, type ChatExtension, type ChatExtensionContext, type FooterStatus } from "../src/extensions.ts";
+import { ChatUI } from "../src/ui.ts";
 import { Resources } from "../src/resources.ts";
 import { openPersistentChat } from "../src/session.ts";
 import { lockLost, model, testModels } from "./models.ts";
@@ -86,7 +87,7 @@ export default defineChatExtension({ name: "external-ui", tools: [defineTool({ n
     await writeFile(other, 'export default { name: "other", piD: { commands: [{ name: "external-ui", description: "Duplicate", execute() {} }] } };');
     await assert.rejects(codingRegistry(resources, [path, other]), /Duplicate or reserved command \/external-ui/);
     let index = 0;
-    for (const name of ["help", "interrupt", "model", "session-new", "extensions", "skill:manual", "Bad", "with space", "/slash"]) {
+    for (const name of ["help", "interrupt", "model", "session-new", "extensions", "notifications", "skill:manual", "Bad", "with space", "/slash"]) {
       const invalid = join(directory, `invalid-${index++}.mjs`);
       await writeFile(invalid, `export default { name: "other", piD: { commands: [{ name: ${JSON.stringify(name)}, description: "Reserved", execute() {} }] } };`);
       await assert.rejects(codingRegistry(resources, [invalid]), /reserved command|invalid piD/);
@@ -116,7 +117,8 @@ test("extension commands, help and completions are local and selected-only; nati
     assert.equal((await f.chat.harness.snapshot(Badge, context))?.active, false);
     assert.match(f.terminal.text().split("\n").at(-1) ?? "", /Badge off.*QUIET/);
     await f.send("/help"); await until(() => f.terminal.text().includes("Set the fixture badge"));
-    assert.match(f.terminal.text(), /\/badge \[on\|off\]/); f.terminal.send("\r"); await until(() => !f.app.ui.busy);
+    assert.match(f.terminal.text(), /\/badge \[on\|off\]/); assert.match(f.terminal.text(), /\/notifications/);
+    f.terminal.send("\r"); await until(() => !f.app.ui.busy);
     await f.send("/extensions"); await until(() => f.terminal.text().includes("badge: /badge, footer"));
     f.terminal.send("\r"); await until(() => !f.app.ui.busy);
     await f.send("/badge invalid"); await until(() => !f.app.ui.busy);
@@ -267,6 +269,50 @@ test("footer callbacks are serialized, coalesce commits, isolate bad providers a
   } finally { release.resolve(); await f.app.close(); f.terminal.dispose(); }
 });
 
+test("sparse/malformed/throwing footer results stay inside their provider boundary while healthy output keeps refreshing", async () => {
+  let value: unknown = Array(1), version = 1, throwing = true, lookupThrows = false;
+  const registry = createRegistry(), { models, faux } = testModels();
+  registry.install(defineChatExtension({ name: "malformed", piD: { get footer() {
+    if (lookupThrows) throw new Error("PRIVATE-PROVIDER-LOOKUP");
+    return () => value as readonly FooterStatus[];
+  } } }));
+  registry.install(defineChatExtension({ name: "throwing", piD: { footer() { if (throwing) throw new Error("PRIVATE-DETAIL"); return []; } } }));
+  registry.install(defineChatExtension({ name: "healthy", piD: { footer: () => [{ text: `GOOD-${version}`, tone: "green" }] } }));
+  const harness = await Harness.open(new MemoryStorage(), { models, registry }, context), conversation = await harness.root(context, { agent: { model } });
+  const terminal = new TestTerminal(110, 30), ui = new ChatUI(terminal, { animate: false }), errors: Error[] = [];
+  ui.start();
+  const binding = watchExtensionFooter({ harness, conversation }, ui, (error) => { errors.push(error as Error); ui.setNotice((error as Error).message); });
+  const refresh = async () => { await binding.refresh(); await terminal.flush(); assert.match(terminal.text().split("\n").at(-1) ?? "", new RegExp(`GOOD-${version}(?:\\s|$)`)); };
+  try {
+    await refresh(); assert.deepEqual(errors.map((error) => error.message), ["Extension malformed: footer failed.", "Extension throwing: footer failed."]);
+    assert(!terminal.text().includes("PRIVATE-DETAIL")); assert.equal(ui.unavailable, false);
+    const inherited = Array(1); Object.setPrototypeOf(inherited, { 0: { text: "INHERITED" } });
+    for (const malformed of [Array(2), [{ text: "PARTIAL" }, ,], inherited, [undefined], [null], ["string"], { 0: { text: "ARRAY-LIKE" }, length: 1 },
+      [{ text: 1 }], [{ text: "bad", tone: "invalid" }], [{ text: "bad", bold: "true" }], [{ text: "bad", strikethrough: 1 }],
+      [{ get text() { throw new Error("PRIVATE-GETTER"); } }], [{ text: "bad", get tone() { throw new Error("PRIVATE-TONE"); } }],
+      new Proxy([{ text: "bad" }], { getOwnPropertyDescriptor() { throw new Error("PRIVATE-PROXY"); } })]) {
+      value = malformed; version++; await refresh();
+      assert(!terminal.text().includes("PARTIAL")); assert(!terminal.text().includes("PRIVATE-"));
+    }
+    assert.equal(errors.length, 2, "Repeated failures retain existing diagnostic deduplication.");
+    let reads = 0;
+    value = [{ get text() { if (reads++) throw new Error("READ-TWICE"); return "SNAPSHOT\x1b[2J\nOK"; }, bold: true, strikethrough: false }];
+    version++; await refresh(); assert.equal(reads, 1); assert.match(terminal.text(), /SNAPSHOT OK/);
+    const customIterator = [{ text: "DENSE" }];
+    Object.defineProperty(customIterator, Symbol.iterator, { value: function* () { yield undefined; } });
+    value = customIterator; version++; await refresh(); assert.match(terminal.text(), /DENSE/);
+    value = [{ text: "KNOWN-FIELDS", get extra() { throw new Error("SPREAD-OUTSIDE-BOUNDARY"); } }];
+    version++; await refresh(); assert.match(terminal.text(), /KNOWN-FIELDS/);
+    value = undefined; throwing = false; version++; await refresh();
+    value = Array(1); throwing = true; version++; await refresh();
+    assert.equal(errors.length, 4, "A recovered provider reports a later failure again.");
+    value = []; throwing = false; version++; await refresh();
+    lookupThrows = true; version++; await refresh();
+    assert.equal(errors.length, 5); assert.equal(errors.at(-1)?.message, "Extension malformed: footer failed.");
+    assert.equal(faux.state.callCount, 0);
+  } finally { await binding.stop(); ui.stop(); await harness.close(context); terminal.dispose(); }
+});
+
 test("shutdown aborts and joins a slow footer without rendering stale results or retaining commit subscriptions", async (t) => {
   const entered = Promise.withResolvers<ChatExtensionContext>(), release = Promise.withResolvers<void>();
   let slow = false;
@@ -355,6 +401,55 @@ test("a detached footer stops observing commits while its Harness can remain ope
     assert.equal(calls, before);
   } finally { await binding.stop(); await harness.close(context); await f.app.close(); f.terminal.dispose(); }
 });
+
+test("/notifications is completable, read-only and keyboard usable, with zero model/preflight/admission/storage/transcript effects", async (t) => {
+  const f = await memory([]);
+  try {
+    const before = await f.chat.conversation.context(context), beforeTranscript = transcript(f.app.ui);
+    const commits = t.mock.method(f.storage, "commit"), submit = t.mock.method(f.chat.conversation, "submit");
+    let preflights = 0;
+    f.chat.beforeModel = async () => { preflights++; throw new Error("Model access forbidden."); };
+    assert((await suggest(f.chat, "/not"))?.items.some((item) => item.value === "notifications"));
+    await f.send("/notifications unexpected"); await until(() => !f.app.ui.busy);
+    assert.match(f.terminal.text(), /Use \/notifications without arguments/);
+    await f.send("/notifications"); assert.match(f.terminal.text(), /No notifications pending/);
+    f.terminal.send("\r"); await until(() => !f.app.ui.busy); assert(f.app.ui.composer.focused);
+    f.app.ui.addExtensionToast("fixture", "ACTIVE-NOTIFICATION", { timeoutMs: 0 });
+    f.app.ui.addExtensionToast("fixture", "QUEUED-NOTIFICATION\n" + "long detail\n".repeat(100) + "END-NOTIFICATION", { timeoutMs: 0 });
+    await f.send("/notifications"); assert.match(f.terminal.text(), /2 pending/);
+    f.app.ui.composer.editor.setText("newer draft");
+    f.terminal.send("\x1b[B"); f.terminal.send("\x1b[F"); await f.terminal.flush();
+    assert.match(f.terminal.text(), /END-NOTIFICATION/); assert.match(f.terminal.text(), /Queued · #2 · info/);
+    f.terminal.send("\x1b[3~"); await f.terminal.flush(); assert.match(f.terminal.text(), /selection removed/);
+    f.terminal.send("d"); await f.terminal.flush(); assert.match(f.terminal.text(), /ACTIVE-NOTIFICATION/);
+    f.terminal.send("\x04"); await f.terminal.flush(); assert.match(f.terminal.text(), /No notifications pending/);
+    f.terminal.send("\r"); await until(() => !f.app.ui.busy);
+    assert(f.app.ui.composer.focused); assert.equal(f.app.ui.composer.editor.getText(), "newer draft");
+    assert.equal(commits.mock.callCount(), 0); assert.equal(submit.mock.callCount(), 0);
+    assert.equal(preflights, 0); assert.equal(f.faux.state.callCount, 0);
+    assert.equal(transcript(f.app.ui), beforeTranscript); assert.deepEqual(await f.chat.conversation.context(context), before);
+    await f.send("/notifications"); await f.app.close(); assert(!f.app.ui.tui.hasOverlay());
+  } finally { await f.app.close(); f.terminal.dispose(); }
+});
+
+for (const [key, data] of [["Escape", "\x1b"], ["Ctrl+C", "\x03"]]) {
+  test(`${key} closes /notifications without interrupting generation or dismissing a notification`, async () => {
+    const f = await memory([], { tokensPerSecond: 30, responses: [fauxAssistantMessage("Slow fixture response. ".repeat(100))] });
+    try {
+      await f.send("ORIGINAL-INPUT"); await until(() => f.faux.state.callCount === 1);
+      f.app.ui.addExtensionToast("fixture", "RETAINED-NOTIFICATION", { timeoutMs: 0 });
+      const run = (await f.chat.harness.snapshot(LiveDoc, f.chat.conversation.id, context))?.run;
+      assert(run);
+      await f.send("/notifications"); assert(f.app.ui.tui.hasOverlay());
+      f.terminal.send(data); await until(() => !f.app.ui.tui.hasOverlay()); await f.terminal.flush();
+      assert.deepEqual((await f.chat.harness.snapshot(LiveDoc, f.chat.conversation.id, context))?.run, run);
+      assert(f.app.ui.composer.focused); assert.equal(f.app.ui.composer.editor.getText(), "/notifications");
+      assert.match(f.terminal.text(), /RETAINED-NOTIFICATION/); assert(!f.terminal.stopped); assert.equal(f.faux.state.callCount, 1);
+      await f.chat.conversation.abort(context); await f.chat.conversation.waitForIdle(context);
+      assert(!(await f.chat.conversation.context(context)).messages.some((message) => JSON.stringify(message).includes("NOTIFICATION")));
+    } finally { await f.app.close(); f.terminal.dispose(); }
+  });
+}
 
 test("successful presentation commands leave visible output with zero admissions, preflights, model calls, context changes or storage writes", async (t) => {
   const f = await memory([presenter]);
@@ -458,11 +553,15 @@ test("session handoff clears UI-only messages/toasts, and reopening never restor
     assert.equal((await app.chat.conversation.context(context)).entries.length, 0);
     await send("/session-new"); await until(() => app.chat.file === second); await terminal.flush();
     assert(!transcript(app.ui).includes("FIRST-SESSION")); assert(!terminal.text().includes("LOCAL-TOAST"));
+    app.ui.composer.editor.setText("/notifications"); terminal.send("\r"); await terminal.flush();
+    assert.match(terminal.text(), /No notifications pending/); terminal.send("\r"); await until(() => !app.ui.busy);
     await send("/present-local SECOND-SESSION"); await delay(550); await terminal.flush();
     assert.match(terminal.text(), /LOCAL-TOAST SECOND-SESSION/, "The old session's timer must not dismiss its successor's card.");
     await app.close();
     app = await mountChat(await make(first), terminal, false); await terminal.flush();
     assert(!transcript(app.ui).includes("LOCAL-MESSAGE")); assert(!terminal.text().includes("LOCAL-TOAST"));
+    app.ui.composer.editor.setText("/notifications"); terminal.send("\r"); await terminal.flush();
+    assert.match(terminal.text(), /No notifications pending/); terminal.send("\r"); await until(() => !app.ui.busy);
     assert.equal((await app.chat.conversation.context(context)).entries.length, 0); assert.equal(faux.state.callCount, 0);
   } finally { await app.close(); terminal.dispose(); await rm(directory, { recursive: true, force: true }); }
 });

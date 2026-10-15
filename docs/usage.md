@@ -114,6 +114,7 @@ Durable stores the model and thinking level in its agent document. Omit override
 | `/interrupt` | Cancel foreground work and withdraw queued inputs |
 | `/skills`, `/skill:name [request]` | List skills / load full instructions as model input |
 | `/extensions` | List selected Durable extensions and tools |
+| `/notifications` | Inspect and dismiss active/queued UI notifications (not the Durable inbox) |
 
 Commands are local except `/skill:name`, `/steer` and `/followup`, which admit model input. Selected extensions may add local commands through the `piD` adapter; `/help` includes them. Their return values never automatically become model input. Login and opening a session can also resume existing work. Read-only commands remain available during work. Reset, settings, session and logout changes require no unfinished foreground or background work. `/login` can connect a paused unauthenticated session but refuses actively running work.
 
@@ -142,6 +143,23 @@ Failed or cancelled admission restores input without discarding a newer draft. A
 | Up/Down | Editor navigation / current-run prompt history |
 
 Completion includes explicit-only skills. It does not crawl files, expand attachments or make model requests. An 80×24 or larger terminal is recommended; layouts are tested down to 40×16.
+
+### Notifications (UI-only)
+
+`/notifications` opens a keyboard inspector, including an empty state when nothing is pending. It works during generation and without login. The list distinguishes the active top-left card from queued notifications and shows the selected notification's source, type and wrapped plain text.
+
+| Key in the inspector | Action |
+| --- | --- |
+| Up / Down | Select a notification |
+| PgUp / PgDn, Home / End | Scroll the selected content / jump to its beginning or end |
+| `d` / Delete | Dismiss the selected notification |
+| Ctrl+D | Dismiss all pending notifications |
+| Enter | Close without dismissing; restore composer focus and any newer draft |
+| Escape / Ctrl+C | Cancel the inspector using normal command-draft restoration, not interrupt generation (Ctrl+C still copies an active selection first) |
+
+Arrivals, expiry and mouse/keyboard dismissal update the same queue. Inspection neither consumes queued items nor starts/resets their lifetime; the active timer keeps running. If the selected item disappears, selection clears: choose another before dismissing again. Outside the inspector, cards remain focus-free, with mouse **×** dismissal, wheel scrolling and automatic expiry (five seconds by default; extensions can disable expiry).
+
+Only pending UI state is retained: at most **100 notifications**, including the active one. Overflow discards the oldest queued item, not the active card or its timer. Each sanitized body is limited to **64 KiB UTF-8**, with a truncation marker, and its source label to **512 bytes**. Long content within those limits is scrollable. There is no dismissed/expired history. Notifications and inspection never enter model prompts, transcripts or Durable execution state. Session handoff/shutdown clears the queue, timers and inspector; reopening does not restore them. `/new` and `/clear` keep presentation in the same mount.
 
 ## Instructions, skills and extensions
 
@@ -196,7 +214,7 @@ See the [extension guide](extensions.md) for complete examples and discovery rul
 
 Restart after code changes and keep the same trusted files globally available or explicitly supplied for recovery. The `pi-d.loaded-extensions` document stores names, never executable paths. Missing prior extensions or task definitions keeps unfinished work paused; `/status` identifies them. An idle reopen can omit extensions. Names do not prove code-version compatibility, and older stores may not record them.
 
-pi-d supplies no executable project-extension discovery, package installer, hot reload, Pi compatibility facade, arbitrary widgets/provider registration or module-level shutdown callback. The [local command/footer API](extensions.md#local-commands-and-footer-status) is a small presentation adapter around native Durable handles. Footer subscriptions, local message blocks and notification queues/timers are owned by the mounted session and cleaned up on handoff/shutdown. Command `message(text, { type? })` and `toast(text, { type?, timeoutMs? })` never change model context or saved history; `notify(text)` retains its bottom-bar behavior. Toasts default to five seconds, or use `timeoutMs: 0` until clicked closed. See [command presentation](extensions.md#command-presentation) for styling, copy/scroll behavior and lifetimes. Manage resources inside invocations, honor cancellation, and avoid unmanaged processes, sockets, watchers or timers at module scope.
+pi-d supplies no executable project-extension discovery, package installer, hot reload, Pi compatibility facade, arbitrary widgets/provider registration or module-level shutdown callback. The [local command/footer API](extensions.md#local-commands-and-footer-status) is a small presentation adapter around native Durable handles. Footer subscriptions, local message blocks and notification queues/timers are owned by the mounted session and cleaned up on handoff/shutdown. Command `message(text, { type? })` and `toast(text, { type?, timeoutMs? })` never change model context or saved history; `notify(text)` retains its bottom-bar behavior. Toasts default to five seconds, or use `timeoutMs: 0` to disable expiry. Click **×**, or use [the `/notifications` keyboard inspector](#notifications-ui-only), to dismiss them. See [command presentation](extensions.md#command-presentation) for styling, copy/scroll behavior and lifetimes. Manage resources inside invocations, honor cancellation, and avoid unmanaged processes, sockets, watchers or timers at module scope.
 
 ## Durability and failure limits
 
@@ -244,7 +262,7 @@ This is a local installation candidate, not a public npm release. `private: true
 
 ## Verification
 
-The offline suite uses the Harness, faux providers, temporary workspaces/stores and mocked OAuth endpoints/socket binding. It covers tool execution, committed streaming/thinking, cancellation, persisted queue/recovery, compaction/AGENTS refresh, resource discovery, external TypeScript extensions, UI-only messages/toasts (rendering, copy/focus, timeouts, cancellation and cleanup with zero model/context/storage effects), session handoff, credential persistence, browser/device flows, storage failure, context/diff display, Unicode, resizing, search and terminal cleanup. The Codex payload test stops before network access.
+The offline suite uses the Harness, faux providers, temporary workspaces/stores and mocked OAuth endpoints/socket binding. It covers tool execution, committed streaming/thinking, cancellation, persisted queue/recovery, compaction/AGENTS refresh, resource discovery, external TypeScript extensions, UI-only messages/toasts and `/notifications` (keyboard inspection/dismissal, bounded retention, live queue synchronization, copy/focus, timeouts, cancellation and cleanup with zero model/context/storage effects), sparse/malformed footer isolation, session handoff, credential persistence, browser/device flows, storage failure, context/diff display, Unicode, resizing, search and terminal cleanup. The Codex payload test stops before network access.
 
 `npm run smoke` uses a real offline POSIX PTY. `npm run test:package` builds and checks exact package contents, reviewed dependency versions, isolated cached local/global-prefix installs, SQLite admission, external extensions and real PTYs. It neither replaces the user's command nor uses a live session. Run `npm ci --ignore-scripts` first to populate npm's hydration cache. These offline checks are not a final-release sign-off.
 

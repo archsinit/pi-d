@@ -79,7 +79,7 @@ Enter accepts a visible completion; otherwise it sends input when idle or runs a
 
 While a task runs, ordinary Enter keeps your draft. Use `/steer text` to guide its next turn or `/followup text` to queue work after it finishes. `/interrupt` stops foreground work and withdraws queued inputs; background tasks and existing file changes remain.
 
-`/help` lists commands. `/status` shows the saved workspace, session path, authentication and recovery state. See the [command and keyboard reference](docs/usage.md#commands) for the full controls.
+`/help` lists commands. `/status` shows the saved workspace, session path, authentication and recovery state. `/notifications` inspects active/queued UI notifications: Up/Down selects, PgUp/PgDn scrolls, `d` dismisses selected, Ctrl+D dismisses all, Enter closes. See the [command and keyboard reference](docs/usage.md#commands) for the full controls.
 
 ## How it differs from pi
 

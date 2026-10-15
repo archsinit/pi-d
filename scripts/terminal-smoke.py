@@ -191,12 +191,17 @@ with tempfile.TemporaryDirectory(prefix="pi-d-extension-startup-") as directory:
     def fixture(name, marker):
         return (f'import {{ appendFileSync }} from "node:fs"; '
                 f'appendFileSync({json.dumps(str(marker))}, "loaded"); '
+                'let revision = 0; '
                 f'export default {{ name: {json.dumps(name)}, piD: {{ commands: [{{ '
                 'name: "present-local", description: "Offline UI presentation", execute(_args, api) { '
-                'api.message("PTY-EXTENSION-MESSAGE"); '
+                'revision++; api.message("PTY-EXTENSION-MESSAGE"); '
                 'api.toast("https://example.invalid/pty", { type: "success", timeoutMs: 0 }); '
-                'api.notify("PTY-EXTENSION-NOTICE"); } }] } };')
+                'api.toast("PTY-QUEUED-DETAIL\\n" + "long content\\n".repeat(80) + "PTY-LAST-DETAIL", { timeoutMs: 0 }); '
+                'api.toast("PTY-THIRD-NOTIFICATION", { timeoutMs: 0 }); '
+                'api.notify("PTY-EXTENSION-NOTICE"); } }], '
+                'footer() { return [{ text: "PTY-HEALTHY-" + revision, tone: "green" }]; } } };')
 
+    (extensions / "sparse.mjs").write_text('export default { name: "sparse-footer", piD: { footer() { return Array(1); } } };')
     automatic = extensions / "automatic.mjs"
     automatic.write_text(fixture("automatic-probe", automatic_marker))
     alias = extensions / "alias.mjs"
@@ -237,6 +242,35 @@ with tempfile.TemporaryDirectory(prefix="pi-d-extension-startup-") as directory:
                 wait_for(b"PTY-EXTENSION-MESSAGE", start)
                 wait_for(b"https://example.invalid/pty", start)
                 wait_for(b"PTY-EXTENSION-NOTICE", start)
+                wait_for(b"PTY-HEALTHY-1", start)
+                start = len(captured)
+                os.write(master, b"/not")
+                wait_for(b"pending UI notifications", start)
+                os.write(master, b"\t\r")
+                wait_for(b"3 pending", start)
+                start = len(captured)
+                os.write(master, b"\x1b[B")
+                wait_for("Queued · #2 · info".encode(), start)
+                start = len(captured)
+                os.write(master, b"\x1b[F")
+                wait_for(b"PTY-LAST-DETAIL", start)
+                start = len(captured)
+                os.write(master, b"d")
+                wait_for(b"selection removed", start)
+                start = len(captured)
+                os.write(master, b"d\x04")  # Stale selected delete is harmless; Ctrl+D clears the same queue.
+                wait_for(b"No notifications pending", start)
+            else:
+                start = len(captured)
+                os.write(master, b"/notifications\r")
+                wait_for(b"No notifications pending", start)
+            start = len(captured)
+            os.write(master, b"\r")
+            wait_for(b"ready", start)
+            start = len(captured)
+            os.write(master, b"NOTIFICATION-FOCUS-DRAFT")
+            wait_for(b"NOTIFICATION-FOCUS-DRAFT", start)
+            os.write(master, b"\x15")  # Ctrl+U clears the unsent focus probe, not a model request.
             os.write(master, b"/extensions\r")
             wait_for(b"Selected Durable extensions")
             if expected:
@@ -258,6 +292,7 @@ with tempfile.TemporaryDirectory(prefix="pi-d-extension-startup-") as directory:
             restored = termios.tcgetattr(slave)
             assert restored[3] & (termios.ICANON | termios.ECHO) == original[3] & (termios.ICANON | termios.ECHO)
             assert b"PROJECT_EXTENSION_EXECUTED" not in captured
+            assert b"Unhandled" not in captured and b"TypeError" not in captured
             assert not (base / "config/pi-d/auth.json").exists()
         finally:
             if process.poll() is None:
@@ -265,4 +300,4 @@ with tempfile.TemporaryDirectory(prefix="pi-d-extension-startup-") as directory:
                 process.wait()
             os.close(master)
             os.close(slave)
-    print("PTY passed: global XDG extension discovery, UI-only extension messages/toasts/notices without login, explicit additions, symlink deduplication, --no-extensions, demo isolation and no project execution.")
+    print("PTY passed: global XDG discovery, sparse-footer isolation/healthy refresh, UI-only presentation, /notifications completion/selection/long-content/dismissal/empty state/focus, explicit additions, symlink deduplication, --no-extensions, demo isolation and no project execution.")
