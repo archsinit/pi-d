@@ -65,12 +65,22 @@ export async function extensionCommands(owner: Owner, signal: AbortSignal): Prom
 }
 
 export async function executeExtensionCommand(owner: Owner, name: string, argument: string, ui: ChatUI, signal: AbortSignal): Promise<boolean> {
-  const command = (await selected(owner, signal)).flatMap((extension) => extension.piD?.commands ?? []).find((item) => item.name === name);
-  if (!command) return false;
+  const match = (await selected(owner, signal)).flatMap((extension) => (extension.piD?.commands ?? []).map((command) => ({ extension, command })))
+    .find(({ command }) => command.name === name);
+  if (!match) return false;
   signal.throwIfAborted();
+  const { command, extension } = match, source = `${extension.name} /${command.name}`;
   let active = true;
+  const visible = () => active && !signal.aborted;
   try {
-    await command.execute(argument, { ...extensionContext(owner, signal), notify: (message) => { if (active && !signal.aborted) ui.setNotice(message); } });
+    const execution = command.execute(argument, {
+      ...extensionContext(owner, signal),
+      notify: (message) => { if (visible()) ui.setNotice(message); },
+      message: (text, options) => { if (visible()) ui.addExtensionMessage(source, text, options); },
+      toast: (text, options) => { if (visible()) ui.addExtensionToast(source, text, options); },
+    });
+    // Synchronous handlers end now, not after an await that could admit their queued late callbacks.
+    if (execution && typeof execution.then === "function") await execution;
   } finally { active = false; }
   return true; // Even an untyped extension's return value is never submitted to the model.
 }

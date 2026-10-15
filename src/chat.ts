@@ -50,6 +50,7 @@ export async function mountChat(initial: ChatHandle, terminal: Terminal, animate
     if (closingPromise) return closingPromise;
     closing = true;
     commandController?.abort(new Error("Cancelled."));
+    ui.clearExtensionPresentation();
     closingPromise = (async () => {
       const stoppingFooter = footer?.stop();
       try { await admissionWork?.catch(() => {}); await stoppingFooter; await footer?.stop(); await terminal.drainInput(200, 30); }
@@ -109,6 +110,7 @@ export async function mountChat(initial: ChatHandle, terminal: Terminal, animate
       nextWatch = await next.conversation.watch(context);
       signal.throwIfAborted();
       switching = true;
+      ui.clearExtensionPresentation();
       // Once ownership handoff starts, complete it even if cancelled; shutdown joins this admission.
       await footer?.stop(); footer = undefined;
       await watch.stop();
@@ -178,6 +180,9 @@ export async function mountChat(initial: ChatHandle, terminal: Terminal, animate
   };
   ui.tui.addInputListener((data) => {
     if (matchesKey(data, "ctrl+c")) {
+      if (ui.tui.hasActiveSelection()) {
+        void ui.tui.copyActiveSelectionToClipboard().catch(report); return { consume: true };
+      }
       if (commandController) commandController.abort(new Error("Cancelled."));
       else void close().catch(() => {});
       return { consume: true };

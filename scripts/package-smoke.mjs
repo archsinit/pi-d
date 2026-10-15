@@ -47,14 +47,20 @@ const chat = await openPersistentChat(session, models, { defaults: { model: { pr
 try {
   const installed = registry.snapshot().extension("install-probe");
   assert.equal(defineChatExtension(installed), installed);
-  let notice = "", statuses = [];
-  const ui = { setNotice: (text) => { notice = text; }, setExtensionStatus: (items) => { statuses = items; } };
+  let notice = "", statuses = [], uiMessages = [], toasts = [];
+  const ui = {
+    setNotice: (text) => { notice = text; }, setExtensionStatus: (items) => { statuses = items; },
+    addExtensionMessage: (...args) => { uiMessages.push(args); }, addExtensionToast: (...args) => { toasts.push(args); },
+  };
   const signal = new AbortController().signal;
   const commands = await extensionCommands(chat, signal);
   assert(commands.some((command) => command.name === "install-local"));
   assert.deepEqual(await commands.find((command) => command.name === "install-local").getArgumentCompletions("o"), [{ value: "ok", label: "ok", description: undefined }]);
   assert(await executeExtensionCommand(chat, "install-local", "ok", ui, signal));
   assert.equal(notice, "INSTALLED-COMMAND-OK ok");
+  assert.deepEqual(uiMessages, [["install-probe /install-local", "INSTALLED-MESSAGE-OK", { type: "success" }]]);
+  assert.deepEqual(toasts, [["install-probe /install-local", "INSTALLED-TOAST-OK", { timeoutMs: 0 }]]);
+  assert.equal(faux.state.callCount, 0);
   assert.equal((await chat.conversation.context(context)).entries.length, 0);
   const footer = watchExtensionFooter(chat, ui, (error) => { throw error; });
   try { await footer.refresh(); assert.equal(statuses[0].text, "INSTALLED-FOOTER-OK"); }
@@ -95,7 +101,10 @@ import { visibleWidth } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 import { Value } from "typebox/value";
 export default defineChatExtension({ name: "install-probe", piD: {
-  commands: [{ name: "install-local", description: "Local installation probe", complete: () => [{ value: "ok", label: "ok" }], execute: (argument, api) => api.notify("INSTALLED-COMMAND-OK " + argument) }],
+  commands: [{ name: "install-local", description: "Local installation probe", complete: () => [{ value: "ok", label: "ok" }], execute: (argument, api) => {
+    api.notify("INSTALLED-COMMAND-OK " + argument);
+    api.message("INSTALLED-MESSAGE-OK", { type: "success" }); api.toast("INSTALLED-TOAST-OK", { timeoutMs: 0 });
+  } }],
   footer: () => [{ text: "INSTALLED-FOOTER-OK", tone: "cyan" }],
 }, sections: [section("install_probe", () => "INSTALLED-SECTION-OK")], tools: [defineTool({ name: "install_probe", description: "Offline installation probe", parameters: Type.Object({}), execute: async (_args, api) => {
   if (AIType.String !== Type.String || !Value.Check(Type.String(), "ok") || visibleWidth("ok") !== 2) throw new Error("Host SDK resolution failed.");

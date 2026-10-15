@@ -191,7 +191,11 @@ with tempfile.TemporaryDirectory(prefix="pi-d-extension-startup-") as directory:
     def fixture(name, marker):
         return (f'import {{ appendFileSync }} from "node:fs"; '
                 f'appendFileSync({json.dumps(str(marker))}, "loaded"); '
-                f'export default {{ name: {json.dumps(name)} }};')
+                f'export default {{ name: {json.dumps(name)}, piD: {{ commands: [{{ '
+                'name: "present-local", description: "Offline UI presentation", execute(_args, api) { '
+                'api.message("PTY-EXTENSION-MESSAGE"); '
+                'api.toast("https://example.invalid/pty", { type: "success", timeoutMs: 0 }); '
+                'api.notify("PTY-EXTENSION-NOTICE"); } }] } };')
 
     automatic = extensions / "automatic.mjs"
     automatic.write_text(fixture("automatic-probe", automatic_marker))
@@ -227,6 +231,12 @@ with tempfile.TemporaryDirectory(prefix="pi-d-extension-startup-") as directory:
         process = subprocess.Popen(arguments, cwd=workspace, stdin=slave, stdout=slave, stderr=slave, env=environment)
         try:
             wait_for(b"ready" if mode == "demo" else b"ChatGPT is not connected")
+            if expected:
+                start = len(captured)
+                os.write(master, b"/present-local\r")
+                wait_for(b"PTY-EXTENSION-MESSAGE", start)
+                wait_for(b"https://example.invalid/pty", start)
+                wait_for(b"PTY-EXTENSION-NOTICE", start)
             os.write(master, b"/extensions\r")
             wait_for(b"Selected Durable extensions")
             if expected:
@@ -255,4 +265,4 @@ with tempfile.TemporaryDirectory(prefix="pi-d-extension-startup-") as directory:
                 process.wait()
             os.close(master)
             os.close(slave)
-    print("PTY passed: global XDG extension discovery, explicit additions, symlink deduplication, --no-extensions, demo isolation and no project execution.")
+    print("PTY passed: global XDG extension discovery, UI-only extension messages/toasts/notices without login, explicit additions, symlink deduplication, --no-extensions, demo isolation and no project execution.")

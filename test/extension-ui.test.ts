@@ -7,12 +7,13 @@ import test from "node:test";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import { fauxAssistantMessage } from "@earendil-works/pi-ai/providers/faux";
 import { createRegistry, defineDoc, Harness, LiveDoc, MemoryStorage } from "@earendil-works/pi-durable";
+import { stripTerminalSequences } from "@earendil-works/pi-tui";
 import { mountChat, type ChatHandle } from "../src/chat.ts";
 import { codingRegistry } from "../src/coding.ts";
 import { chatCommands } from "../src/commands.ts";
 import { commandCompletion } from "../src/completion.ts";
 import { validateChatExtensions, watchExtensionFooter } from "../src/extension-ui.ts";
-import { defineChatExtension, type ChatExtension, type ChatExtensionContext } from "../src/extensions.ts";
+import { defineChatExtension, type ChatCommandContext, type ChatExtension, type ChatExtensionContext } from "../src/extensions.ts";
 import { Resources } from "../src/resources.ts";
 import { openPersistentChat } from "../src/session.ts";
 import { lockLost, model, testModels } from "./models.ts";
@@ -35,6 +36,15 @@ const badge = defineChatExtension({ name: "badge", piD: {
   },
 } });
 
+const presenter = defineChatExtension({ name: "presenter", piD: { commands: [{
+  name: "present-local", description: "Present UI-only output", execute: (argument, api) => {
+    api.notify("LOCAL-NOTICE");
+    api.message(`LOCAL-MESSAGE ${argument}`, { type: "success" });
+    api.toast(`LOCAL-TOAST ${argument}`, { timeoutMs: 0 });
+  },
+}] } });
+const transcript = (ui: import("../src/ui.ts").ChatUI) => ui.transcript.render(106).map(stripTerminalSequences).join("\n");
+
 async function until(predicate: () => boolean, detail: () => string = () => "") {
   for (let i = 0; i < 200; i++) { if (predicate()) return; await delay(10); }
   assert.fail("Timed out waiting for extension UI.\n" + detail());
@@ -48,12 +58,12 @@ function controls(chat: ChatHandle, models: ReturnType<typeof testModels>["model
 async function memory(extensions: ChatExtension[] = [badge], options: Parameters<typeof testModels>[0] = {}) {
   const { models, faux } = testModels(options), registry = createRegistry();
   for (const extension of extensions) registry.install(extension);
-  const harness = await Harness.open(new MemoryStorage(), { models, registry }, context);
+  const storage = new MemoryStorage(), harness = await Harness.open(storage, { models, registry }, context);
   const conversation = await harness.root(context, { agent: { model } });
   const chat = controls({ harness, conversation, models, label: "fixture", close: () => harness.close(context) }, models);
   const terminal = new TestTerminal(110, 30), app = await mountChat(chat, terminal, false);
   const send = async (text: string) => { app.ui.composer.editor.setText(text); terminal.send("\r"); await terminal.flush(); };
-  return { chat, terminal, app, send, models, faux };
+  return { chat, terminal, app, send, models, faux, storage };
 }
 
 const suggest = (chat: ChatHandle, text: string, signal = new AbortController().signal) => chat.completion!.getSuggestions([text], 0, text.length, { signal, force: true });
@@ -140,32 +150,46 @@ test("a local command is usable during generation and cannot implicitly submit i
   } finally { await f.app.close(); f.terminal.dispose(); }
 });
 
-test("request cancellation reaches commands and native contexts, restores the draft and suppresses late notices", async () => {
-  const entered = Promise.withResolvers<ChatExtensionContext>(), release = Promise.withResolvers<void>();
-  const extension = defineChatExtension({ name: "waiting", piD: { commands: [{ name: "wait-local", description: "Wait locally", execute: async (_args, api) => {
-    entered.resolve(api); await release.promise;
-    api.notify("LATE-NOTICE-MUST-NOT-SHOW"); api.context.abortSignal!.throwIfAborted();
+for (const [key, data] of [["Escape", "\x1b"], ["Ctrl+C", "\x03"]]) {
+  test(`${key} cancellation reaches commands/native contexts, preserves prior output and suppresses all late presentation`, async (t) => {
+    const entered = Promise.withResolvers<ChatCommandContext>(), release = Promise.withResolvers<void>();
+    const extension = defineChatExtension({ name: "waiting", piD: { commands: [{ name: "wait-local", description: "Wait locally", execute: async (_args, api) => {
+      api.message("BEFORE-CANCEL-MESSAGE"); api.toast("BEFORE-CANCEL-TOAST", { timeoutMs: 0 });
+      entered.resolve(api); await release.promise;
+      api.notify("LATE-NOTICE"); api.message("LATE-MESSAGE"); api.toast("LATE-TOAST");
+      api.context.abortSignal!.throwIfAborted();
+    } }] } });
+    const f = await memory([extension]);
+    try {
+      const toasts = t.mock.method(f.app.ui, "addExtensionToast");
+      await f.send("/wait-local"); const invocation = await entered.promise;
+      assert.equal(invocation.signal, invocation.context.abortSignal);
+      f.app.ui.composer.editor.setText("new draft"); f.terminal.send(data);
+      assert(invocation.signal.aborted); release.resolve(); await until(() => !f.app.ui.busy); await f.terminal.flush();
+      assert.equal(f.app.ui.composer.editor.getExpandedText(), "/wait-local\n\nnew draft");
+      assert(!f.terminal.text().includes("LATE-")); assert.match(f.terminal.text(), /BEFORE-CANCEL-TOAST/);
+      assert.equal(toasts.mock.callCount(), 1, "Late toasts must not enter the queue behind the visible card.");
+      assert.match(transcript(f.app.ui), /BEFORE-CANCEL-MESSAGE/); assert.equal(f.faux.state.callCount, 0);
+      assert.equal((await f.chat.conversation.context(context)).entries.length, 0);
+    } finally { release.resolve(); await f.app.close(); f.terminal.dispose(); }
+  });
+}
+
+test("a completed synchronous handler cannot retain presentation callbacks, even through a queued microtask", async (t) => {
+  let retained: ChatCommandContext | undefined;
+  const extension = defineChatExtension({ name: "retained", piD: { commands: [{ name: "retain-local", description: "Retain callbacks", execute: (_args, api) => {
+    retained = api; api.notify("INITIAL-NOTICE"); api.message("INITIAL-MESSAGE"); api.toast("INITIAL-TOAST", { timeoutMs: 0 });
+    queueMicrotask(() => { api.notify("MICROTASK-NOTICE"); api.message("MICROTASK-MESSAGE"); api.toast("MICROTASK-TOAST"); });
   } }] } });
   const f = await memory([extension]);
   try {
-    await f.send("/wait-local"); const invocation = await entered.promise;
-    assert.equal(invocation.signal, invocation.context.abortSignal);
-    f.app.ui.composer.editor.setText("new draft"); f.terminal.send("\x1b");
-    assert(invocation.signal.aborted); release.resolve(); await until(() => !f.app.ui.busy); await f.terminal.flush();
-    assert.equal(f.app.ui.composer.editor.getExpandedText(), "/wait-local\n\nnew draft");
-    assert(!f.terminal.text().includes("LATE-NOTICE")); assert.equal(f.faux.state.callCount, 0);
-    assert.equal((await f.chat.conversation.context(context)).entries.length, 0);
-  } finally { release.resolve(); await f.app.close(); f.terminal.dispose(); }
-});
-
-test("a completed command cannot use a retained notify callback to change a later screen", async () => {
-  let notify: (message: string) => void = () => assert.fail("Command did not run.");
-  const extension = defineChatExtension({ name: "retained", piD: { commands: [{ name: "retain-local", description: "Retain a callback", execute: (_args, api) => { notify = api.notify; api.notify("INITIAL-NOTICE"); } }] } });
-  const f = await memory([extension]);
-  try {
+    const toasts = t.mock.method(f.app.ui, "addExtensionToast");
     await f.send("/retain-local"); await until(() => !f.app.ui.busy);
-    notify("STALE-NOTICE"); await f.terminal.flush();
-    assert.match(f.terminal.text(), /INITIAL-NOTICE/); assert(!f.terminal.text().includes("STALE-NOTICE"));
+    retained!.notify("STALE-NOTICE"); retained!.message("STALE-MESSAGE"); retained!.toast("STALE-TOAST"); await f.terminal.flush();
+    assert.match(f.terminal.text(), /INITIAL-NOTICE/); assert.match(f.terminal.text(), /INITIAL-TOAST/);
+    assert.match(transcript(f.app.ui), /INITIAL-MESSAGE/);
+    assert(!f.terminal.text().includes("STALE-")); assert(!f.terminal.text().includes("MICROTASK-"));
+    assert.equal(toasts.mock.callCount(), 1);
   } finally { await f.app.close(); f.terminal.dispose(); }
 });
 
@@ -330,4 +354,139 @@ test("a detached footer stops observing commits while its Harness can remain ope
     await harness.commit(async (tx) => { await tx.doc(Badge); }, context); await delay(20);
     assert.equal(calls, before);
   } finally { await binding.stop(); await harness.close(context); await f.app.close(); f.terminal.dispose(); }
+});
+
+test("successful presentation commands leave visible output with zero admissions, preflights, model calls, context changes or storage writes", async (t) => {
+  const f = await memory([presenter]);
+  try {
+    const before = await f.chat.conversation.context(context);
+    const commits = t.mock.method(f.storage, "commit"), submissions = t.mock.method(f.chat.conversation, "submit");
+    let preflights = 0;
+    f.chat.beforeModel = async () => { preflights++; throw new Error("No model access allowed."); };
+    await f.send("/present-local offline"); await until(() => !f.app.ui.busy); await f.terminal.flush();
+    assert.match(f.terminal.text(), /LOCAL-MESSAGE offline/); assert.match(f.terminal.text(), /LOCAL-TOAST offline/);
+    assert.match(f.terminal.text().split("\n").at(-1) ?? "", /LOCAL-NOTICE/);
+    assert.match(transcript(f.app.ui), /◇ Extension · success · presenter \/present-local/);
+    assert(!transcript(f.app.ui).includes("Assistant"));
+    assert.equal(commits.mock.callCount(), 0); assert.equal(submissions.mock.callCount(), 0);
+    assert.equal(preflights, 0); assert.equal(f.faux.state.callCount, 0);
+    assert.deepEqual(await f.chat.conversation.context(context), before);
+    // Neither an unrelated native commit nor a transcript redraw replaces mounted UI output.
+    await f.chat.conversation.configure({ thinkingLevel: "high" }, context); await f.terminal.flush();
+    f.terminal.resize(80, 24); await f.terminal.flush();
+    assert.match(transcript(f.app.ui), /LOCAL-MESSAGE offline/); assert.match(f.terminal.text(), /LOCAL-TOAST offline/);
+  } finally { await f.app.close(); f.terminal.dispose(); }
+});
+
+test("messages stay anchored as later native transcript entries arrive and survive reset without entering model context", async () => {
+  const f = await memory([presenter], { responses: [fauxAssistantMessage("FIRST-ANSWER"), fauxAssistantMessage("SECOND-ANSWER")] });
+  try {
+    await f.send("FIRST-INPUT"); await f.chat.conversation.waitForIdle(context); await f.terminal.flush();
+    await f.send("/present-local BETWEEN"); await until(() => !f.app.ui.busy);
+    await f.send("SECOND-INPUT"); await f.chat.conversation.waitForIdle(context); await f.terminal.flush();
+    const text = transcript(f.app.ui);
+    assert(text.indexOf("FIRST-ANSWER") < text.indexOf("LOCAL-MESSAGE BETWEEN"));
+    assert(text.indexOf("LOCAL-MESSAGE BETWEEN") < text.indexOf("SECOND-INPUT"));
+    assert.equal((text.match(/LOCAL-MESSAGE BETWEEN/g) ?? []).length, 1);
+    assert.equal(f.faux.state.callCount, 2);
+    const modelContext = JSON.stringify((await f.chat.conversation.context(context)).messages);
+    assert(!modelContext.includes("LOCAL-")); assert(!modelContext.includes("Extension"));
+    await f.send("/new"); await until(() => !f.app.ui.busy); await f.terminal.flush();
+    assert.match(transcript(f.app.ui), /LOCAL-MESSAGE BETWEEN/); assert(!transcript(f.app.ui).includes("FIRST-ANSWER"));
+    assert.match(f.terminal.text(), /LOCAL-TOAST BETWEEN/);
+    assert(!(await f.chat.conversation.context(context)).messages.some((message) => JSON.stringify(message).includes("LOCAL-")));
+  } finally { await f.app.close(); f.terminal.dispose(); }
+});
+
+test("presentation during streaming does not add a model call and survives live-to-committed view replacement", async (t) => {
+  const done = Promise.withResolvers<void>();
+  let retained: ChatCommandContext | undefined;
+  const extension = defineChatExtension({ name: "async-presentation", piD: { commands: [{ name: "async-local", description: "Present after an await", execute: async (_argument, api) => {
+    await Promise.resolve(); retained = api;
+    api.message("STREAM-MESSAGE"); api.toast("STREAM-TOAST", { timeoutMs: 0 }); done.resolve();
+  } }] } });
+  const f = await memory([extension], { tokensPerSecond: 1000, responses: [fauxAssistantMessage("Streaming fixture text. ".repeat(20))] });
+  try {
+    const toasts = t.mock.method(f.app.ui, "addExtensionToast");
+    await f.send("ORIGINAL-INPUT"); await until(() => f.faux.state.callCount === 1);
+    await f.send("/async-local"); await done.promise;
+    await f.terminal.flush();
+    retained!.message("ASYNC-LATE-MESSAGE"); retained!.toast("ASYNC-LATE-TOAST"); retained!.notify("ASYNC-LATE-NOTICE");
+    await f.chat.conversation.waitForIdle(context); await f.terminal.flush();
+    assert.match(transcript(f.app.ui), /STREAM-MESSAGE/); assert.match(f.terminal.text(), /STREAM-TOAST/);
+    assert(!transcript(f.app.ui).includes("ASYNC-LATE")); assert(!f.terminal.text().includes("ASYNC-LATE"));
+    assert.equal(toasts.mock.callCount(), 1);
+    assert.equal(f.faux.state.callCount, 1);
+    assert(!(await f.chat.conversation.context(context)).messages.some((message) => JSON.stringify(message).includes("STREAM-")));
+  } finally { await f.app.close(); f.terminal.dispose(); }
+});
+
+test("copying toast URLs with Ctrl+C neither closes chat nor steals composer focus", async () => {
+  const url = "https://example.invalid/offline", f = await memory([presenter]);
+  try {
+    await f.send(`/present-local ${url}`); await until(() => !f.app.ui.busy); await f.terminal.flush();
+    const row = f.terminal.text().split("\n").findIndex((line) => line.includes(`LOCAL-TOAST ${url}`));
+    assert(row >= 0);
+    const start = 2 + "LOCAL-TOAST ".length, end = start + url.length - 1;
+    f.app.ui.tui.setCopyOnSelect(false);
+    f.terminal.send(`\x1b[<0;${start + 1};${row + 1}M`);
+    f.terminal.send(`\x1b[<32;${end + 1};${row + 1}M`);
+    f.terminal.send(`\x1b[<0;${end + 1};${row + 1}m`);
+    f.terminal.send("\x03"); await f.terminal.flush();
+    assert(!f.terminal.stopped); assert(f.app.ui.composer.focused);
+    assert(f.terminal.output.includes(`\x1b]52;c;${Buffer.from(url).toString("base64")}\x07`));
+    assert.equal(f.faux.state.callCount, 0);
+  } finally { await f.app.close(); f.terminal.dispose(); }
+});
+
+test("session handoff clears UI-only messages/toasts, and reopening never restores them from the temporary store", { timeout: 10000 }, async () => {
+  const directory = await realpath(await mkdtemp(join(tmpdir(), "pi-d-presentation-session-")));
+  const first = join(directory, "first.sqlite"), second = join(directory, "second.sqlite");
+  const { models, faux } = testModels(), registry = createRegistry(); registry.install(presenter);
+  registry.install(defineChatExtension({ name: "timed", piD: { commands: [{ name: "timed-local", description: "A timer owned by the first session", execute: (_argument, api) => api.toast("FIRST-TIMED", { timeoutMs: 500 }) }] } }));
+  const make = async (file: string): Promise<ChatHandle> => {
+    const chat = controls(await openPersistentChat(file, models, { defaults: { model }, registry, onLockLost: lockLost }), models);
+    chat.sessions = { newFile: async () => second, list: async () => ({ choices: [], diagnostics: [] }), open: make };
+    return chat;
+  };
+  const terminal = new TestTerminal(110, 30);
+  let app = await mountChat(await make(first), terminal, false);
+  const send = async (text: string) => { app.ui.composer.editor.setText(text); terminal.send("\r"); await terminal.flush(); await until(() => !app.ui.busy); };
+  try {
+    await send("/timed-local"); await send("/present-local FIRST-SESSION");
+    assert.match(transcript(app.ui), /FIRST-SESSION/); assert.match(terminal.text(), /FIRST-TIMED/);
+    assert.equal((await app.chat.conversation.context(context)).entries.length, 0);
+    await send("/session-new"); await until(() => app.chat.file === second); await terminal.flush();
+    assert(!transcript(app.ui).includes("FIRST-SESSION")); assert(!terminal.text().includes("LOCAL-TOAST"));
+    await send("/present-local SECOND-SESSION"); await delay(550); await terminal.flush();
+    assert.match(terminal.text(), /LOCAL-TOAST SECOND-SESSION/, "The old session's timer must not dismiss its successor's card.");
+    await app.close();
+    app = await mountChat(await make(first), terminal, false); await terminal.flush();
+    assert(!transcript(app.ui).includes("LOCAL-MESSAGE")); assert(!terminal.text().includes("LOCAL-TOAST"));
+    assert.equal((await app.chat.conversation.context(context)).entries.length, 0); assert.equal(faux.state.callCount, 0);
+  } finally { await app.close(); terminal.dispose(); await rm(directory, { recursive: true, force: true }); }
+});
+
+test("shutdown immediately clears presentation timers/state, aborts and joins the command, and ignores its late UI calls", async (t) => {
+  const entered = Promise.withResolvers<ChatCommandContext>(), release = Promise.withResolvers<void>();
+  const extension = defineChatExtension({ name: "shutdown-presentation", piD: { commands: [{ name: "shutdown-local", description: "Wait for shutdown", execute: async (_argument, api) => {
+    api.message("BEFORE-SHUTDOWN"); api.toast("TIMED-SHUTDOWN", { timeoutMs: 100 });
+    api.toast("QUEUED-SHUTDOWN", { timeoutMs: 0 }); entered.resolve(api); await release.promise;
+    api.message("LATE-SHUTDOWN"); api.toast("LATE-SHUTDOWN"); api.notify("LATE-SHUTDOWN");
+  } }] } });
+  const f = await memory([extension]);
+  try {
+    const toasts = t.mock.method(f.app.ui, "addExtensionToast");
+    await f.send("/shutdown-local"); const invocation = await entered.promise;
+    const closing = f.app.close(); assert(invocation.signal.aborted);
+    await f.terminal.flush();
+    const renders = t.mock.method(f.app.ui.tui, "requestRender");
+    await delay(120);
+    assert.equal(renders.mock.callCount(), 0, "No presentation timer may fire while shutdown joins the command.");
+    assert(!transcript(f.app.ui).includes("SHUTDOWN")); assert(!f.terminal.stopped);
+    release.resolve(); await closing;
+    assert(f.terminal.stopped); assert(!transcript(f.app.ui).includes("LATE-SHUTDOWN"));
+    assert.equal(toasts.mock.callCount(), 2);
+    assert.equal((await f.chat.harness.closed).reason, "closed"); assert.equal(f.faux.state.callCount, 0);
+  } finally { release.resolve(); await f.app.close(); f.terminal.dispose(); }
 });

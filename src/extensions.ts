@@ -12,9 +12,29 @@ export interface ChatExtensionContext {
   readonly context: Context;
 }
 
+export type ExtensionMessageType = "info" | "success" | "error";
+export interface ExtensionMessageOptions {
+  /** Host styling; defaults to info. Text is plain, not Markdown or terminal escapes. */
+  readonly type?: ExtensionMessageType;
+}
+export interface ExtensionToastOptions extends ExtensionMessageOptions {
+  /** Defaults to 5000 ms. Zero keeps the notification until the user dismisses it. */
+  readonly timeoutMs?: number;
+}
+
 export interface ChatCommandContext extends ChatExtensionContext {
-  /** Show a plain-text notice during this command. Ignored after completion/cancellation; never enters the transcript. */
+  /** Show a bottom-bar notice. Ignored after completion/cancellation; never enters the transcript. */
   notify(message: string): void;
+  /**
+   * Show a labeled scrollback block for this mount only. No model/context/storage effects.
+   * Accepted output survives return; calls after completion/cancellation are ignored.
+   */
+  message(text: string, options?: ExtensionMessageOptions): void;
+  /**
+   * Queue a focus-free top-left notification; click × to dismiss. No model/context/storage effects.
+   * Accepted output survives return; calls after completion/cancellation are ignored.
+   */
+  toast(text: string, options?: ExtensionToastOptions): void;
 }
 
 export interface ChatCommand {

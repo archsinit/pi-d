@@ -100,10 +100,51 @@ export default defineChatExtension({
 
 - `piD.commands` is an array of `{ name, description, argumentHint?, complete?, execute }`. Names must match `[a-z][a-z0-9_-]*`, without `/`. Built-ins, duplicate names within/across installed extensions and invalid declarations fail startup. The `skill:` namespace is unavailable to extensions; there is no shadowing or load-order winner.
 - Only the current conversation's **natively selected** extensions contribute commands, help entries and completions. `/help` includes them and `/extensions` lists their commands/footer capability.
-- `execute(argument, api)` receives trimmed arguments and a context with `harness`, `conversation`, `signal`, an abort-aware native Chord `context`, and `notify(message)` for a plain-text notice during that invocation (ignored after completion/cancellation). Use these native handles for committed state, not sidecar session files or a second scheduler. Session-scoped documents persist across reopen and `/new`, but are independent in a different session file.
+- `execute(argument, api)` receives trimmed arguments and a context with `harness`, `conversation`, `signal`, an abort-aware native Chord `context`, and the host-owned `notify()`, `message()` and `toast()` presentation methods described below. Use the native handles for committed state, not sidecar session files or a second scheduler. Session-scoped documents persist across reopen and `/new`, but are independent in a different session file.
 - Commands work locally while a model is running or authentication/recovery is paused. No input or callback return value is automatically sent to the model or saved as a chat entry. `//command` still sends literal slash-prefixed text. Callbacks have full account/native API permissions; this is not an effects sandbox. Enforce idle-only requirements yourself if your command needs them.
-- Optional `complete(prefix, api)` receives the same native context, without `notify`, and returns `{ value, label, description? }[]` or `null`, synchronously or asynchronously. For example: `complete: (prefix) => ["on", "off"].filter(value => value.startsWith(prefix)).map(value => ({ value, label: value }))`. Completion text is sanitized, failures are contained, and cancelled results are discarded.
+- Optional `complete(prefix, api)` receives the same native context, without `notify`, `message` or `toast`, and returns `{ value, label, description? }[]` or `null`, synchronously or asynchronously. For example: `complete: (prefix) => ["on", "off"].filter(value => value.startsWith(prefix)).map(value => ({ value, label: value }))`. Completion text is sanitized, failures are contained, and cancelled results are discarded.
 - Escape/Ctrl+C cancels an active command. Honor `api.signal`/`api.context`, release invocation resources in `finally`, and finish promptly: shutdown joins an in-flight command. A thrown command error restores its draft; cancellation does not undo effects already committed.
+
+### Command presentation
+
+All three methods return `void`, accept **plain text**, and strip terminal controls. They are available only inside `piD.commands[].execute`, not native tools, footer providers or completions.
+
+| API | Presentation and lifetime |
+| --- | --- |
+| `api.notify(text)` | Existing one-line bottom-bar notice, unchanged. The next submission clears it. |
+| `api.message(text, options?)` | Wrapped scrollback block headed **Extension · type · extension-name /command**, never an assistant answer. Anchored after the latest committed transcript entry; subsequent streaming, commits, compaction and context reset do not erase it. |
+| `api.toast(text, options?)` | Compact bordered card at the top-left, outside the chat scroll region. Never takes keyboard focus. Click **×** to dismiss; mouse-wheel over long text to read the rest. |
+
+Both new APIs accept `{ type?: "info" | "success" | "error" }`; the default is `"info"`. Toasts additionally accept `{ timeoutMs?: number }`: the default is **5000**, and **0** keeps a card until dismissed. Timeouts must be finite, non-negative and at most 2147483647 ms. Notifications are queued in call order, one card at a time; each timeout starts when its card reaches the front. A persistent card holds later cards until dismissed. Cards use at most 64 columns and about a third of the screen height; on terminals shorter than ten rows they are temporarily hidden to preserve the composer.
+
+For example, this is a complete stock Durable extension with only optional `piD` UI contributions:
+
+```ts
+import { defineChatExtension } from "pi-d-chat/extensions";
+
+export default defineChatExtension({
+  name: "build-links",
+  piD: {
+    commands: [{
+      name: "build-link",
+      description: "Display a build link locally, without asking the model",
+      argumentHint: "[url]",
+      execute(argument, api) {
+        const url = argument || "https://example.invalid/build/42";
+        api.message(`Build details:\n${url}`, { type: "info" });
+        api.toast(`Build ready: ${url}`, { type: "success", timeoutMs: 0 });
+        // Omit timeoutMs for the usual five-second notification.
+      },
+    }],
+  },
+});
+```
+
+Messages and notifications accepted during a command **remain after its handler returns**. Calls retained beyond handler completion, a thrown error or cancellation are ignored, including calls made during cancellation cleanup. Already displayed output is not rolled back on failure/cancellation. Do not keep an invocation open just to keep a URL visible, or create your own UI timers.
+
+These methods are **UI-only**: no model calls, authentication preflight, model-context changes, fabricated Durable entries/documents, saved transcript or separate database. Labels, text and URLs are selectable/copyable using native selection (including Ctrl+C to copy); typing, completion, Escape cancellation, dialogs and chat scrolling keep their usual behavior. Messages scroll with chat; toasts stay at the top-left. Presentation is owned by the mounted session: switching session files or shutting down drops all blocks, queued cards and timers. Reopening does not restore them. `/new` and `/clear` reset model context in the same mount, so its local presentation remains. Extensions still have full native/account permissions and can explicitly perform other effects through their native handles.
+
+The exported `ExtensionMessageType`, `ExtensionMessageOptions` and `ExtensionToastOptions` types describe these options; `ChatCommandContext` includes the three methods.
 
 ### Footer contract
 

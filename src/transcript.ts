@@ -1,6 +1,8 @@
 import type { Message } from "@earendil-works/pi-ai";
 import type { ConversationView, LiveState } from "@earendil-works/pi-durable";
 import { Markdown, stripTerminalSequences, Text, truncateToWidth, type Component } from "@earendil-works/pi-tui";
+import { ExtensionPresentation } from "./extension-presentation.ts";
+import type { ExtensionMessageOptions } from "./extensions.ts";
 import { fill, markdownTheme, paint, safeText } from "./theme.ts";
 
 export function messageText(message: Message): string {
@@ -37,6 +39,14 @@ export class Transcript implements Component {
   private cachedView: ConversationView | undefined;
   private cachedWidth = -1;
   private lines: string[] = [];
+  private readonly extensionMessages: { after: ConversationView["entries"][number]["id"] | undefined; presentation: ExtensionPresentation }[] = [];
+
+  addExtensionMessage(source: string, text: string, options?: ExtensionMessageOptions): void {
+    this.extensionMessages.push({ after: this.view?.entries.at(-1)?.id, presentation: new ExtensionPresentation(source, text, options) });
+    this.invalidate();
+  }
+
+  clearExtensionMessages(): void { this.extensionMessages.length = 0; this.invalidate(); }
 
   invalidate(): void { this.cachedWidth = -1; }
 
@@ -46,7 +56,23 @@ export class Transcript implements Component {
     this.cachedWidth = width;
     const column = Math.max(1, width);
     const rows: string[] = [];
-    for (const entry of this.view?.entries ?? []) {
+    const entries = this.view?.entries ?? [];
+    const anchors = new Set(entries.map((entry) => entry.id));
+    const messages = new Map<ConversationView["entries"][number]["id"] | undefined, ExtensionPresentation[]>();
+    for (const { after, presentation } of this.extensionMessages) {
+      // Compaction/reset can retire an anchor. Keep its UI-only output before the remaining active entries.
+      const anchor = after !== undefined && anchors.has(after) ? after : undefined;
+      const bucket = messages.get(anchor) ?? [];
+      bucket.push(presentation); messages.set(anchor, bucket);
+    }
+    const appendExtensions = (anchor: ConversationView["entries"][number]["id"] | undefined) => {
+      for (const message of messages.get(anchor) ?? []) {
+        rows.push(...new Text(paint(`◇ ${message.label}`, message.tone, true), 0, 0).render(column));
+        rows.push(...message.body.render(column), "");
+      }
+    };
+    appendExtensions(undefined);
+    for (const entry of entries) {
       if (entry.kind === "pi.compaction") {
         rows.push(paint("◇ compacted", "dim"), "");
       }
@@ -54,6 +80,7 @@ export class Transcript implements Component {
         if (message.role === "system") continue;
         this.appendMessage(rows, message, column, false);
       }
+      appendExtensions(entry.id);
     }
     const live = this.view?.docs["pi.live"] as LiveState | undefined;
     for (const tool of [...(live?.tools ?? []), ...(live?.nestedTools ?? [])]) {

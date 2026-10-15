@@ -3,7 +3,8 @@ import {
   Editor, getTerminalColorMode, HStack, ScrollView, stripTerminalSequences, styleText, truncateToWidth, TuiAltScreen, VStack, visibleWidth,
   type Component, type Focusable, type Terminal, type TuiMouseEvent,
 } from "@earendil-works/pi-tui";
-import type { FooterStatus } from "./extensions.ts";
+import { ExtensionToasts } from "./extension-presentation.ts";
+import type { ExtensionMessageOptions, ExtensionToastOptions, FooterStatus } from "./extensions.ts";
 import { editorTheme, fill, paint, rule, safeText, type Tone } from "./theme.ts";
 import { Transcript } from "./transcript.ts";
 
@@ -85,6 +86,8 @@ export class ChatUI {
   private contextTokens: number | undefined;
   private contextLimit: number | undefined;
   private extensionStatus: readonly FooterStatus[] = [];
+  private readonly toasts: ExtensionToasts;
+  private presentationStopped = false;
 
   constructor(terminal: Terminal, options: { animate?: boolean; sessionLabel?: string } = {}) {
     this.animate = options.animate ?? true;
@@ -98,6 +101,7 @@ export class ChatUI {
       scrollbarTrackStyle: (s) => paint(s, "line"), scrollbarThumbStyle: (s) => paint(s, "green"),
     });
     this.composer = new Composer(this.tui);
+    this.toasts = new ExtensionToasts(terminal, () => this.tui.requestRender());
     const chat = new VStack([
       new Line((width) => rule(width, paint(" pi-d ", "title", true), "chatBorder",
         width >= 66 ? paint(` ${this.sessionLabel} `, "dim") : "")),
@@ -109,6 +113,7 @@ export class ChatUI {
       new Line((width) => rule(width, "", "chatBorder", "", true)),
     ]);
     this.tui.setLayoutRoot(new VStack([
+      { component: this.toasts, basis: "auto", shrink: 0 },
       { component: chat, basis: 0, grow: 1, minSize: 3 },
       { component: this.composer, basis: "auto", shrink: 1, minSize: 3 },
       new Line((width) => this.status(width)),
@@ -153,6 +158,21 @@ export class ChatUI {
     this.tui.requestRender();
   }
 
+  addExtensionMessage(source: string, text: string, options?: ExtensionMessageOptions): void {
+    if (this.presentationStopped) return;
+    this.transcript.addExtensionMessage(source, text, options);
+    this.tui.requestRender();
+  }
+
+  addExtensionToast(source: string, text: string, options?: ExtensionToastOptions): void {
+    if (!this.presentationStopped) this.toasts.add(source, text, options);
+  }
+
+  clearExtensionPresentation(): void {
+    this.transcript.clearExtensionMessages();
+    this.toasts.clear();
+  }
+
   setSessionLabel(label: string): void {
     this.sessionLabel = safeText(label).replace(/\s+/g, " ");
     this.tui.requestRender();
@@ -178,6 +198,8 @@ export class ChatUI {
 
   start(): void { this.tui.start(); }
   stop(): void {
+    this.presentationStopped = true;
+    this.clearExtensionPresentation();
     if (this.timer) clearInterval(this.timer);
     this.timer = undefined;
     this.tui.stop({ preserveScreen: true });

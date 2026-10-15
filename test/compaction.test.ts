@@ -50,6 +50,9 @@ test("native background compaction overlaps chat, keeps the composer usable, pla
   };
   try {
     for (let i = 0; i < 4; i++) await ask(`History ${i}. ` + "h".repeat(600));
+    await terminal.flush();
+    app.ui.addExtensionMessage("fixture /notice", "LOCAL-COMPACTION-MESSAGE");
+    app.ui.addExtensionToast("fixture /notice", "LOCAL-COMPACTION-TOAST", { timeoutMs: 0 });
     compaction.enabled = true;
     await ask("Start background summarization."); await reached.promise; await terminal.flush();
     const live = await harness.snapshot(LiveDoc, conversation.id, context);
@@ -87,6 +90,10 @@ test("native background compaction overlaps chat, keeps the composer usable, pla
     await rm(agents); await ask("After deleting the instructions file.");
     assert(!getCurrentSystemPrompt(requests.at(-1)!.messages).includes("AGENTS-V"), "Deleted instructions must leave the effective prompt, whether native placement emitted a patch or a new baseline.");
     await terminal.flush(); assert.equal(app.ui.busy, false);
+    assert.match(app.ui.transcript.render(76).join("\n"), /LOCAL-COMPACTION-MESSAGE/);
+    assert.match(terminal.text(), /LOCAL-COMPACTION-TOAST/);
+    assert(!JSON.stringify(requests).includes("LOCAL-COMPACTION"));
+    assert(!JSON.stringify((await conversation.entries({}, 100, undefined, context)).items).includes("LOCAL-COMPACTION"));
   } finally { gate.resolve(); await app.close(); terminal.dispose(); await rm(directory, { recursive: true, force: true }); }
 });
 

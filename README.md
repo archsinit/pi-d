@@ -15,7 +15,7 @@ Offline renderer capture with scripted output.
 - Review tool failures and committed edit patches in the conversation.
 - Keep separate project sessions with saved models, reasoning levels and workspaces.
 - Steer a running task or queue a follow-up through Durable.
-- Load AGENTS instructions, skills and trusted Durable extensions, including local commands and footer status.
+- Load AGENTS instructions, skills and trusted Durable extensions, including local commands, UI-only messages/toasts and footer status.
 
 ## Quick start
 
@@ -102,7 +102,7 @@ The [full comparison](docs/comparison.md) covers commands, authentication, tools
 
 Credentials, global instructions/skills and trusted extensions live in `~/.config/pi-d/`. Conversations live in `~/.local/share/pi-d/`. Absolute `XDG_CONFIG_HOME` and `XDG_DATA_HOME` replace those bases. Credentials are plaintext private files, separate from session databases. pi-d does not import Pi's credentials, settings or conversations.
 
-Place trusted extension files or folders with an `index.ts` / `index.js` / `index.mjs` / `index.cjs` entry point in `~/.config/pi-d/extensions/` to load them automatically from any workspace. `--no-extensions` disables automatic loading; `--extension path` still adds explicit files. Project extension folders are not auto-loaded. Extensions can contribute local commands with help/completion and styled footer items through the optional `piD` API, while keeping their state and behavior in native Durable documents/hooks. See the [extension guide](docs/extensions.md) for examples, trust and discovery rules.
+Place trusted extension files or folders with an `index.ts` / `index.js` / `index.mjs` / `index.cjs` entry point in `~/.config/pi-d/extensions/` to load them automatically from any workspace. `--no-extensions` disables automatic loading; `--extension path` still adds explicit files. Project extension folders are not auto-loaded. Extensions can contribute local commands with help/completion, labeled scrollback messages, top-left notifications and styled footer items through the optional `piD` API, while keeping their state and behavior in native Durable documents/hooks. See the [extension guide](docs/extensions.md) for examples, trust and discovery rules.
 
 **Recovery can repeat model requests and consume quota or incur charges.** Cancelling a task does not undo file or shell effects. Missing login or recovery extensions keeps work paused; use `/status` to inspect it.
 
