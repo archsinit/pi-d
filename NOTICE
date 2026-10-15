@@ -1,0 +1,17 @@
+Visual reference: btop++ by Aristocratos (https://github.com/aristocratos/btop).
+The palette in src/theme.ts adapts colors from btop's default theme.
+Reference commit: d3389d74e88644c50907e84314c3c7c973ba5be9.
+Copyright 2021 Aristocratos (jakob@qvantnet.com). Apache License 2.0;
+see licenses/btop.txt. No btop rendering implementation or artwork is copied.
+
+The standard coding prompt/tool guidelines in src/coding.ts and the skill
+prompt wording in src/resources.ts adapt Pi 1.2.0's system-prompt.ts,
+tools/{read,bash,edit,write}.ts and skills.ts at commit
+06a466935536f8c9bcacb2d5efc0fc021be1bdff (https://github.com/earendil-works/pi).
+Copyright (c) 2025 Mario Zechner. MIT License; see licenses/pi.txt.
+Host identity/documentation are adapted to Durable. No Pi session runtime is used.
+
+pi-durable and pi-tui are used unmodified, pinned to 1.2.0.
+This application is not a Pi fork and does not implement a custom agent engine.
+It is an independent application, not an official release of the Pi,
+Earendil Works or btop projects.

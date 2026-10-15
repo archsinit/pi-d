@@ -1,0 +1,13 @@
+node_modules/
+dist/
+artifacts/
+*.tgz
+.data/
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+*.sqlite.lock/
+auth.json
+auth.json.lock/
+auth.json.*.tmp
+.DS_Store
