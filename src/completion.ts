@@ -2,28 +2,12 @@ import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import { getSupportedThinkingLevels, type Models } from "@earendil-works/pi-ai/models";
 import { CombinedAutocompleteProvider, type AutocompleteProvider, type SlashCommand } from "@earendil-works/pi-tui";
 import type { ChatHandle } from "./chat.ts";
+import { commands } from "./command-list.ts";
+import { extensionCommands } from "./extension-ui.ts";
 import type { Resources } from "./resources.ts";
 import { safeText } from "./theme.ts";
 
-export const commands: SlashCommand[] = [
-  { name: "new", description: "Reset active context; keep stored history and draft" },
-  { name: "clear", description: "Same as /new" },
-  { name: "session-new", argumentHint: "[name]", description: "Create a separate session for this workspace" },
-  { name: "resume", description: "Choose a saved session for this workspace" },
-  { name: "status", description: "Session, workspace, authentication and recovery diagnostics" },
-  { name: "login", description: "ChatGPT subscription login" },
-  { name: "logout", description: "Remove pi-d's local ChatGPT credentials" },
-  { name: "model", argumentHint: "[provider/id]", description: "Select a model" },
-  { name: "reasoning", argumentHint: "[level]", description: "Select supported thinking" },
-  { name: "skills", description: "List skills and diagnostics" },
-  { name: "extensions", description: "List installed Durable extensions" },
-  { name: "steer", argumentHint: "text", description: "Guide the current run after its tool round" },
-  { name: "followup", argumentHint: "text", description: "Queue input for after the current run" },
-  { name: "interrupt", description: "Stop foreground work and withdraw queued inputs (same as Escape)" },
-  { name: "queue", description: "Show Durable's queued inputs" },
-  { name: "withdraw", argumentHint: "[id]", description: "Withdraw one queued input" },
-  { name: "help", description: "Commands and workspace" },
-];
+export { commands } from "./command-list.ts";
 
 /** Command-only completion: no implicit filesystem crawl, attachment expansion or model request. */
 export function commandCompletion(chat: ChatHandle, models: Models, resources?: Resources): AutocompleteProvider {
@@ -35,7 +19,7 @@ export function commandCompletion(chat: ChatHandle, models: Models, resources?: 
       if (cursorLine !== 0 || !text.startsWith("/") || text.startsWith("//")) return null;
       try {
         if (options.signal.aborted) return null;
-        const choices = commands.map((command) => ({ ...command }));
+        const choices: SlashCommand[] = [...commands.map((command) => ({ ...command })), ...await extensionCommands(chat, options.signal)];
         choices.find((command) => command.name === "model")!.getArgumentCompletions = (prefix) => models.getModels()
           .map((model) => `${model.provider}/${model.id}`).sort().filter((id) => id.startsWith(prefix))
           .map((value) => ({ value, label: value }));

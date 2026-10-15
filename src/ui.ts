@@ -1,8 +1,9 @@
 import type { AgentState, ConversationView, InboxState, LiveState, UsageState } from "@earendil-works/pi-durable";
 import {
-  Editor, HStack, ScrollView, stripTerminalSequences, truncateToWidth, TuiAltScreen, VStack, visibleWidth,
+  Editor, getTerminalColorMode, HStack, ScrollView, stripTerminalSequences, styleText, truncateToWidth, TuiAltScreen, VStack, visibleWidth,
   type Component, type Focusable, type Terminal, type TuiMouseEvent,
 } from "@earendil-works/pi-tui";
+import type { FooterStatus } from "./extensions.ts";
 import { editorTheme, fill, paint, rule, safeText, type Tone } from "./theme.ts";
 import { Transcript } from "./transcript.ts";
 
@@ -83,6 +84,7 @@ export class ChatUI {
   private sessionLabel: string;
   private contextTokens: number | undefined;
   private contextLimit: number | undefined;
+  private extensionStatus: readonly FooterStatus[] = [];
 
   constructor(terminal: Terminal, options: { animate?: boolean; sessionLabel?: string } = {}) {
     this.animate = options.animate ?? true;
@@ -162,6 +164,11 @@ export class ChatUI {
     this.tui.requestRender();
   }
 
+  setExtensionStatus(items: readonly FooterStatus[]): void {
+    this.extensionStatus = items.map((item) => ({ ...item, text: safeText(item.text).replace(/\s+/g, " ").trim() })).filter((item) => item.text);
+    this.tui.requestRender();
+  }
+
   setUnavailable(message: string): void {
     this.unavailable = true;
     this.composer.editor.disableSubmit = true;
@@ -190,7 +197,13 @@ export class ChatUI {
     const context = percent === undefined ? "" : paint(width >= 100
       ? ` ctx ~${compact.format(this.contextTokens!)}/${compact.format(this.contextLimit!)} (${percent}%) ` : ` ctx ~${percent}% `,
       percent >= 90 ? "red" : percent >= 75 ? "gold" : "dim");
-    const warning = (text: string) => truncateToWidth(paint(` ! ${text}`, "red"), Math.max(0, width - visibleWidth(context))) + context;
+    const statuses = this.extensionStatus.map((item) => {
+      const text = paint(item.text, item.tone ?? "muted", item.bold);
+      return item.strikethrough ? styleText(text, { strikethrough: true }, getTerminalColorMode()) : text;
+    }).join(" ");
+    // Contributions share a bounded tail; they cannot replace activity, reasoning or usage indicators.
+    const extensions = statuses ? truncateToWidth(` ${statuses} `, Math.floor(width / 3), "") : "";
+    const warning = (text: string) => truncateToWidth(paint(` ! ${text}`, "red"), Math.max(0, width - visibleWidth(context + extensions))) + context + extensions;
     if (this.notice) return warning(this.notice);
     const live = this.view?.docs["pi.live"] as LiveState | undefined;
     const agent = this.view?.docs["pi.agent"] as AgentState | undefined;
@@ -210,9 +223,10 @@ export class ChatUI {
     const billing = ["openai", "openai-codex"].includes(agent?.model?.provider ?? "") ? "subscription " : `~$${cost.toFixed(4)} `;
     const totals = width >= 78 ? paint(` ↑${compact.format(input)} ↓${compact.format(output)} `, "violet") + paint(billing, "gold") : "";
     const thinking = agent?.thinkingLevel ? paint(` · ${safeText(agent.thinkingLevel).replace(/\s+/g, " ")}`, "gold") : "";
-    const state = truncateToWidth(activity, Math.max(0, width - visibleWidth(totals + thinking + context) - 1));
-    const modelLabel = truncateToWidth(paint(`  ${model}`, "muted"), Math.max(0, width - visibleWidth(state + totals + thinking + context) - 1)) + thinking;
-    const gap = Math.max(1, width - visibleWidth(state + modelLabel + context + totals));
-    return state + modelLabel + " ".repeat(gap) + context + totals;
+    const tail = context + totals + extensions;
+    const state = truncateToWidth(activity, Math.max(0, width - visibleWidth(tail + thinking) - 1));
+    const modelLabel = truncateToWidth(paint(`  ${model}`, "muted"), Math.max(0, width - visibleWidth(state + tail + thinking) - 1)) + thinking;
+    const gap = Math.max(1, width - visibleWidth(state + modelLabel + tail));
+    return state + modelLabel + " ".repeat(gap) + tail;
   }
 }

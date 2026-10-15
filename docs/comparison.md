@@ -111,10 +111,10 @@ See [Usage and safety](usage.md) for discovery order, paths, authentication, rec
 
 | Area | pi 1.2.0 | pi-d |
 | --- | --- | --- |
-| Extension format | Default factory receiving Pi's `ExtensionAPI` | Default-exported Durable `Extension` object with tools, sections, hooks, wrappers and tasks. Pi factories do not work |
-| Extension capabilities | Commands, shortcuts, CLI flags, UI/renderers/widgets, providers, events and session control | Durable registry contracts; no Pi-style command/UI/provider registration or session lifecycle facade |
+| Extension format | Default factory receiving Pi's `ExtensionAPI` | Default-exported Durable `Extension` object with tools, sections, hooks, wrappers and tasks; optional `piD` host UI contributions. Pi factories do not work |
+| Extension capabilities | Commands, shortcuts, CLI flags, UI/renderers/widgets, providers, events and session control | Durable registry contracts plus `piD` local commands, help/completion and styled footer items. No arbitrary widgets, shortcuts, provider registration or Pi compatibility facade |
 | Discovery/reload | Personal/project/configured/package extensions, trust gates and `/reload` | Global config `extensions/` discovery plus repeatable `--extension file`; `--no-extensions` opts out of discovery. No project auto-loading. jiti loads TS/JS with pinned host SDKs. Restart after code changes; keep trusted files available for recovery. Stored names never execute paths |
-| Lifecycle | Session start/shutdown events and reload contracts | Cancellation and cleanup through invocation/task contexts. No module-level shutdown callback; extension authors manage module resources |
+| Lifecycle | Session start/shutdown events and reload contracts | Cancellation and cleanup through invocation/task contexts; mounted footer subscriptions/callbacks abort and detach on session handoff/shutdown. No module-level shutdown callback or general lifecycle event facade |
 | Packages/templates | npm/git Pi packages and parameterized Markdown prompt templates | No package installer, package configuration or template system. Skills/sections can supply instructions without template compatibility |
 | MCP | Built-in stdio/HTTP connections, configuration, authentication and `/mcp` | No built-in client, configuration or UI; needs a trusted Durable integration |
 | Codemode/tool search | Built-in extensions, initially inactive; can be enabled or activated by MCP | Neither is installed by pi-d. Durable has APIs for them; dependency presence does not enable them |

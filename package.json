@@ -13,6 +13,12 @@
   "bin": {
     "pi-d": "bin/pi-d.mjs"
   },
+  "exports": {
+    "./extensions": {
+      "types": "./dist/extensions.d.ts",
+      "import": "./dist/extensions.js"
+    }
+  },
   "files": [
     "bin/", "dist/", "docs/comparison.md", "docs/extensions.md", "docs/usage.md", "docs/preview.svg", "licenses/", "LICENSE", "NOTICE", "npm-shrinkwrap.json"
   ],

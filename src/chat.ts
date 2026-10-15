@@ -3,6 +3,7 @@ import type { Models } from "@earendil-works/pi-ai/models";
 import { estimateContextTokens, estimateMessageTokens } from "@earendil-works/pi-ai/utils/estimate";
 import type { Conversation, ConversationView, ConversationWatch, Harness, LiveState, AgentState } from "@earendil-works/pi-durable";
 import { matchesKey, type AutocompleteProvider, type Terminal } from "@earendil-works/pi-tui";
+import { watchExtensionFooter } from "./extension-ui.ts";
 import { safeText } from "./theme.ts";
 import { ChatUI } from "./ui.ts";
 
@@ -38,6 +39,7 @@ export async function mountChat(initial: ChatHandle, terminal: Terminal, animate
   const ui = new ChatUI(terminal, { animate, sessionLabel: initial.label });
   let chat = initial;
   let watch = await chat.conversation.watch(context);
+  let footer: ReturnType<typeof watchExtensionFooter> | undefined;
   const finished = Promise.withResolvers<void>();
   let closing = false, switching = false;
   let closingPromise: Promise<void> | undefined;
@@ -49,7 +51,8 @@ export async function mountChat(initial: ChatHandle, terminal: Terminal, animate
     closing = true;
     commandController?.abort(new Error("Cancelled."));
     closingPromise = (async () => {
-      try { await admissionWork?.catch(() => {}); await terminal.drainInput(200, 30); }
+      const stoppingFooter = footer?.stop();
+      try { await admissionWork?.catch(() => {}); await stoppingFooter; await footer?.stop(); await terminal.drainInput(200, 30); }
       finally {
         try { ui.stop(); }
         finally {
@@ -79,6 +82,8 @@ export async function mountChat(initial: ChatHandle, terminal: Terminal, animate
     };
     if (owner.completion) ui.composer.editor.setAutocompleteProvider(owner.completion);
     await render(observer.value);
+    footer = watchExtensionFooter(owner, ui, report);
+    void footer.refresh();
     observer.start(render);
     void observer.closed.then((end) => {
       if (!closing && !switching && chat === owner) {
@@ -105,6 +110,7 @@ export async function mountChat(initial: ChatHandle, terminal: Terminal, animate
       signal.throwIfAborted();
       switching = true;
       // Once ownership handoff starts, complete it even if cancelled; shutdown joins this admission.
+      await footer?.stop(); footer = undefined;
       await watch.stop();
       await chat.close();
       chat = next; watch = nextWatch; installed = true;
@@ -125,7 +131,9 @@ export async function mountChat(initial: ChatHandle, terminal: Terminal, animate
     let admitted = false;
     const owner = chat;
     try {
-      const result = owner.command ? await owner.command(original, ui, controller.signal) : original;
+      let result: CommandResult;
+      try { result = owner.command ? await owner.command(original, ui, controller.signal) : original; }
+      finally { if (chat === owner) void footer?.refresh(); }
       if (result === undefined) return;
       if (typeof result !== "string" && result.type === "session") {
         await switchSession(result.file, result.fresh ?? false, controller.signal); return;

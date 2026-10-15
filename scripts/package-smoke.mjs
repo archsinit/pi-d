@@ -30,7 +30,9 @@ import { join } from "node:path";
 import { BACKGROUND_CONTEXT as context } from "@earendil-works/chord/context";
 import { createModels } from "@earendil-works/pi-ai/models";
 import { fauxAssistantMessage, fauxProvider, fauxToolCall } from "@earendil-works/pi-ai/providers/faux";
+import { defineChatExtension } from "pi-d-chat/extensions";
 import { codingEnv, codingRegistry } from "./dist/coding.js";
+import { executeExtensionCommand, extensionCommands, watchExtensionFooter } from "./dist/extension-ui.js";
 import { Resources } from "./dist/resources.js";
 import { openPersistentChat } from "./dist/session.js";
 const [extension, workspace, session, config] = process.argv.slice(2);
@@ -43,6 +45,21 @@ faux.appendResponses([fauxAssistantMessage(fauxToolCall("install_probe", {}), { 
 const models = createModels(); models.setProvider(faux.provider);
 const chat = await openPersistentChat(session, models, { defaults: { model: { provider: "faux", modelId: "faux-1" } }, registry, env: codingEnv, defaultCwd: workspace, onLockLost: (error) => { throw error; } });
 try {
+  const installed = registry.snapshot().extension("install-probe");
+  assert.equal(defineChatExtension(installed), installed);
+  let notice = "", statuses = [];
+  const ui = { setNotice: (text) => { notice = text; }, setExtensionStatus: (items) => { statuses = items; } };
+  const signal = new AbortController().signal;
+  const commands = await extensionCommands(chat, signal);
+  assert(commands.some((command) => command.name === "install-local"));
+  assert.deepEqual(await commands.find((command) => command.name === "install-local").getArgumentCompletions("o"), [{ value: "ok", label: "ok", description: undefined }]);
+  assert(await executeExtensionCommand(chat, "install-local", "ok", ui, signal));
+  assert.equal(notice, "INSTALLED-COMMAND-OK ok");
+  assert.equal((await chat.conversation.context(context)).entries.length, 0);
+  const footer = watchExtensionFooter(chat, ui, (error) => { throw error; });
+  try { await footer.refresh(); assert.equal(statuses[0].text, "INSTALLED-FOOTER-OK"); }
+  finally { await footer.stop(); }
+  await access(new URL("./dist/extensions.d.ts", import.meta.url));
   const input = await chat.conversation.submit({ type: "input", content: "Test the installed extension." }, context);
   const receipt = await input.wait(context);
   const messages = (await chat.conversation.context(context)).messages;
@@ -57,7 +74,7 @@ try {
   const packed = JSON.parse(run("npm", ["pack", "--ignore-scripts", "--json", "--pack-destination", temporary], root))[0];
   const files = packed.files.map((file) => file.path).sort();
   const expected = ["README.md", "LICENSE", "NOTICE", "package.json", "npm-shrinkwrap.json", "bin/pi-d.mjs", "docs/comparison.md", "docs/extensions.md", "docs/usage.md", "docs/preview.svg",
-    ...readdirSync(join(root, "src")).filter((file) => file.endsWith(".ts")).map((file) => `dist/${file.replace(/\.ts$/, ".js")}`),
+    ...readdirSync(join(root, "src")).filter((file) => file.endsWith(".ts")).flatMap((file) => [".js", ".d.ts"].map((extension) => `dist/${file.replace(/\.ts$/, extension)}`)),
     ...readdirSync(join(root, "licenses")).map((file) => `licenses/${file}`)].sort();
   assert.deepEqual(files, expected, "Package only runtime JavaScript, documentation, notices and the pinned dependency closure.");
   const archive = join(temporary, packed.filename);
@@ -69,14 +86,18 @@ try {
       checkVersions(pkg);
     }
   };
-  writeFileSync(extension, `import { defineExtension, defineTool, section } from "@earendil-works/pi-durable";
+  writeFileSync(extension, `import { defineChatExtension } from "pi-d-chat/extensions";
+import { defineTool, section } from "@earendil-works/pi-durable";
 import { Type as AIType } from "@earendil-works/pi-ai";
 import { fauxText } from "@earendil-works/pi-ai/providers/faux";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import { visibleWidth } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 import { Value } from "typebox/value";
-export default defineExtension({ name: "install-probe", sections: [section("install_probe", () => "INSTALLED-SECTION-OK")], tools: [defineTool({ name: "install_probe", description: "Offline installation probe", parameters: Type.Object({}), execute: async (_args, api) => {
+export default defineChatExtension({ name: "install-probe", piD: {
+  commands: [{ name: "install-local", description: "Local installation probe", complete: () => [{ value: "ok", label: "ok" }], execute: (argument, api) => api.notify("INSTALLED-COMMAND-OK " + argument) }],
+  footer: () => [{ text: "INSTALLED-FOOTER-OK", tone: "cyan" }],
+}, sections: [section("install_probe", () => "INSTALLED-SECTION-OK")], tools: [defineTool({ name: "install_probe", description: "Offline installation probe", parameters: Type.Object({}), execute: async (_args, api) => {
   if (AIType.String !== Type.String || !Value.Check(Type.String(), "ok") || visibleWidth("ok") !== 2) throw new Error("Host SDK resolution failed.");
   return { output: [fauxText("INSTALLED-EXTENSION-OK " + (await api.agent(BACKGROUND_CONTEXT)).cwd)] };
 } })] });`);

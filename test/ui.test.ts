@@ -307,6 +307,43 @@ test("the entire surface stays explicitly black on a light terminal", async () =
   } finally { ui.stop(); await watch.stop(); await harness.close(context); terminal.dispose(); }
 });
 
+test("extension footer items preserve layout, safely style text and stay visible with notices", async () => {
+  const terminal = new TestTerminal(110, 24), ui = new ChatUI(terminal, { animate: false });
+  const demo = await openDemo(100000), context = BACKGROUND_CONTEXT;
+  const watch = await demo.conversation.watch(context);
+  watch.start(async (view) => ui.setView(view)); ui.setView(watch.value);
+  try {
+    await demo.conversation.configure({ model: { provider: "openai-codex", modelId: "long-model/".repeat(10) }, thinkingLevel: "max" }, context);
+    ui.setContextUsage(1000, 100000);
+    ui.start();
+    for (const tone of ["gold", "dim"] as const) {
+      ui.setExtensionStatus([{ text: "X\x1b[2J\x1b]52;c;secret\x07\n你好", tone, strikethrough: tone === "dim" }]);
+      for (const columns of [40, 80, 110, 160]) {
+        terminal.resize(columns, 24); await terminal.flush();
+        const footer = terminal.text().split("\n").at(-1) ?? "";
+        assert.match(footer, /ready/); assert.match(footer, /· max/); assert.match(footer, /ctx ~1%|ctx ~1K\/100K/);
+        assert.match(footer, /X 你好/); assert(!footer.includes("secret"));
+        assert(ui.tui.getScreenLines().every((line) => visibleWidth(line) <= columns));
+        const x = footer.indexOf("X"), cell = terminal.screen.buffer.active.getLine(23)?.getCell(x); assert(cell);
+        assert.equal(!!cell.isStrikethrough(), tone === "dim");
+        assert.equal(cell.getFgColor(), tone === "dim" ? 0x66666f : 0xcbc06c);
+        if (columns >= 78) { assert.match(footer, /subscription/); assert.match(footer, /↑/); }
+      }
+    }
+    ui.setNotice("A local notice"); await terminal.flush();
+    assert.match(terminal.text().split("\n").at(-1) ?? "", /A local notice.*X 你好/);
+    ui.setNotice("");
+    ui.setExtensionStatus([{ text: "very-long-status-".repeat(100), tone: "cyan" }, { text: "second" }]);
+    for (const columns of [40, 80, 110, 160]) {
+      terminal.resize(columns, 24); await terminal.flush();
+      const footer = terminal.text().split("\n").at(-1) ?? "";
+      assert.match(footer, /ready/); assert.match(footer, /· max/); assert.match(footer, /ctx ~/);
+      assert(ui.tui.getScreenLines().every((line) => visibleWidth(line) <= columns));
+    }
+    ui.setExtensionStatus([]); await terminal.flush(); assert(!terminal.text().includes("very-long-status"));
+  } finally { ui.stop(); await watch.stop(); await demo.close(); terminal.dispose(); }
+});
+
 test("untrusted message content cannot carry terminal control sequences", () => {
   assert.equal(safeText("okay\x1b[2J\x1b]52;c;secret\x07\x00\n你好"), "okay\n你好");
 });

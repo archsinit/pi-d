@@ -1,7 +1,8 @@
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
-import { createModels } from "@earendil-works/pi-ai/models";
+import { createModels, type Models } from "@earendil-works/pi-ai/models";
 import { fauxAssistantMessage, fauxProvider } from "@earendil-works/pi-ai/providers/faux";
 import { createRegistry, Harness, MemoryStorage } from "@earendil-works/pi-durable";
+import type { ChatHandle } from "./chat.ts";
 
 export const demoAnswer = `## Small surface. Real engine.
 
@@ -23,7 +24,7 @@ The frame takes its cues from **btop**: quiet lines, embedded titles, colored sh
 
 > This is an offline design demo, not a live model.`;
 
-export async function openDemo(tokensPerSecond = 90) {
+export async function openDemo(tokensPerSecond = 90): Promise<ChatHandle & { models: Models; answer: () => void }> {
   const faux = fauxProvider({ tokensPerSecond });
   const models = createModels();
   models.setProvider(faux.provider);

@@ -3,9 +3,12 @@ import { dirname } from "node:path";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import { getSupportedThinkingLevels, type Models } from "@earendil-works/pi-ai/models";
 import { InboxDoc, type SubmissionId, type UserInput } from "@earendil-works/pi-durable";
+import type { SlashCommand } from "@earendil-works/pi-tui";
 import type { ChatHandle } from "./chat.ts";
 import { Dialog, showDialog } from "./dialog.ts";
-import { commands } from "./completion.ts";
+import { commands } from "./command-list.ts";
+import { executeExtensionCommand, extensionCommands } from "./extension-ui.ts";
+import type { ChatExtension } from "./extensions.ts";
 import { connectSubscription } from "./login.ts";
 import { Resources, xml } from "./resources.ts";
 import { parseModel, parseThinking } from "./session.ts";
@@ -13,7 +16,7 @@ import { pickSession } from "./sessions.ts";
 import { requireRecoveryReady, sessionStatus } from "./status.ts";
 import type { ChatUI } from "./ui.ts";
 
-const help = commands.map((command) => `/${command.name}${command.argumentHint ? ` ${command.argumentHint}` : ""} · ${command.description}`).join("\n")
+const help = (extra: SlashCommand[]) => [...commands, ...extra].map((command) => `/${command.name}${command.argumentHint ? ` ${command.argumentHint}` : ""} · ${command.description}`).join("\n")
   + "\n/skill:name [request] · Load full skill instructions\n\nCommands are local except /skill, /steer and /followup, which admit model input. Prefix // to send a literal slash command.\nTab completes · Escape cancels · Ctrl+C closes";
 
 export async function requireSubscription(chat: ChatHandle, models: Models): Promise<void> {
@@ -68,7 +71,7 @@ export function chatCommands(chat: ChatHandle, models: Models, resources?: Resou
     const match = text.match(/^\/(\S+)(?:\s+([\s\S]*))?$/);
     if (!match) return text;
     const [, command, raw = ""] = match, argument = raw.trim(), context = BACKGROUND_CONTEXT;
-    if (command === "help") { await showDialog(ui.tui, new Dialog(ui.tui, `Workspace: ${(await chat.conversation.agent(context)).cwd ?? "offline demo"}\n\n${help}`), signal); return; }
+    if (command === "help") { await showDialog(ui.tui, new Dialog(ui.tui, `Workspace: ${(await chat.conversation.agent(context)).cwd ?? "offline demo"}\n\n${help(await extensionCommands(chat, signal))}`), signal); return; }
     if (command === "status") {
       if (argument) throw new Error("Use /status without arguments.");
       await showDialog(ui.tui, new Dialog(ui.tui, await sessionStatus(chat, models)), signal); return;
@@ -162,7 +165,13 @@ export function chatCommands(chat: ChatHandle, models: Models, resources?: Resou
       return;
     }
     if (command === "extensions") {
-      await showDialog(ui.tui, new Dialog(ui.tui, "Selected Durable extensions:\n" + (await chat.conversation.agent(context)).extensions.map((extension) => `${extension.name}: ${(extension.tools ?? []).map((tool) => tool.name).join(", ") || "sections/hooks/tasks"}`).join("\n") + "\n\nTrusted global extensions load from the config extensions/ directory; --extension adds files. Restart after code changes."), signal);
+      const selected = (await chat.conversation.agent(context)).extensions as readonly ChatExtension[];
+      const details = selected.map((extension) => `${extension.name}: ${[
+        ...(extension.tools ?? []).map((tool) => tool.name),
+        ...(extension.piD?.commands ?? []).map((item) => `/${item.name}`),
+        ...(extension.piD?.footer ? ["footer"] : []),
+      ].join(", ") || "sections/hooks/tasks"}`).join("\n");
+      await showDialog(ui.tui, new Dialog(ui.tui, "Selected Durable extensions:\n" + details + "\n\nTrusted global extensions load from the config extensions/ directory; --extension adds files. Restart after code changes."), signal);
       return;
     }
     if (command === "skills" || command.startsWith("skill:")) {
@@ -180,6 +189,7 @@ export function chatCommands(chat: ChatHandle, models: Models, resources?: Resou
       const content = await readFile(skill.filePath, "utf8");
       return `<skill name="${xml(skill.name)}" location="${xml(skill.filePath)}">\nResolve relative paths against ${dirname(skill.filePath)}.\n${content}\n</skill>${argument ? "\n\n" + raw : ""}`;
     }
+    if (await executeExtensionCommand(chat, command, argument, ui, signal)) return;
     throw new Error(`Unknown command /${command}. Use /help, or // to send it as text.`);
   };
 }

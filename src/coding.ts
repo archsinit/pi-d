@@ -5,6 +5,7 @@ import { createRegistry, defineExtension, section, type Extension, type PromptIn
 import { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node";
 import { CodingTools } from "@earendil-works/pi-durable/tools";
 import { createJiti } from "jiti";
+import { validateChatExtensions } from "./extension-ui.ts";
 import { expandPath, loadAgents, Resources, skillPrompt, xml } from "./resources.ts";
 
 // Adapted from Pi 1.2.0's standard prompt/tool contributions; see NOTICE.
@@ -32,7 +33,7 @@ export function codingPrompt(resources: Resources, onReport?: (message: string) 
     section("preamble", () => "You are an expert coding assistant operating inside pi-d, a coding agent harness. You help users by reading files, executing commands, editing code, and writing new files.", { tag: false }),
     section("tools", ({ agent }) => `${agent.tools.map((tool) => `- ${tool.name}: ${snippets[tool.name] ?? tool.description}`).join("\n") || "(none)"}\n\nIn addition to the tools above, you may have access to other custom tools depending on the project.`),
     section("rules", ({ agent }) => [...agent.tools.flatMap((tool) => guidelines[tool.name] ?? []), "Be concise in your responses", "Show file paths clearly when working with files"].map((rule) => `- ${rule}`).join("\n")),
-    section("host", () => `This is stock pi-durable, not Pi's session runtime. Extensions use Durable's Extension format, not Pi's ExtensionAPI. For this host's extension API and examples read ${fileURLToPath(new URL("../docs/extensions.md", import.meta.url))}. No sandbox: tools and extensions have this user's operating-system permissions. Do not claim file changes or commands succeeded unless their tool results confirm it. Before working in a subdirectory, read any more specific AGENTS.md instructions there.`),
+    section("host", () => `This is stock pi-durable, not Pi's session runtime. Extensions use Durable's Extension format with optional piD command/footer contributions, not Pi's ExtensionAPI. For this host's extension API and examples read ${fileURLToPath(new URL("../docs/extensions.md", import.meta.url))}. No sandbox: tools and extensions have this user's operating-system permissions. Do not claim file changes or commands succeeded unless their tool results confirm it. Before working in a subdirectory, read any more specific AGENTS.md instructions there.`),
     section("project_context", async (input) => {
       const files = await loadAgents(cwd(input), resources.configDir);
       return files.length ? "Project-specific instructions and guidelines:\n\n" + files.map(({ path, content }) => `<project_instructions path="${xml(path)}">\n${content}\n</project_instructions>`).join("\n\n") : undefined;
@@ -69,7 +70,9 @@ export async function codingRegistry(resources: Resources, paths: string[] = [],
   if (!paths.length) return registry;
   // Reuse the host SDK even for an extension outside this checkout, without a global install.
   const packages = ["@earendil-works/pi-durable", "@earendil-works/pi-ai", "@earendil-works/pi-tui", "@earendil-works/chord", "typebox"];
-  const alias: Record<string, string> = {};
+  const alias: Record<string, string> = {
+    "pi-d-chat/extensions": fileURLToPath(new URL(import.meta.url.endsWith(".ts") ? "./extensions.ts" : "./extensions.js", import.meta.url)),
+  };
   for (const name of packages) {
     const manifest = await packageManifest(name);
     const metadata = JSON.parse(await readFile(manifest, "utf8"));
@@ -86,6 +89,7 @@ export async function codingRegistry(resources: Resources, paths: string[] = [],
     const extension = await loader.import<Extension>(expandPath(path), { default: true });
     if (!extension || typeof extension !== "object" || typeof extension.name !== "string" || !extension.name.trim()) throw new Error(`Extension ${path} must default-export a named Durable Extension object.`);
     if (registry.snapshot().extension(extension.name)) throw new Error(`Duplicate or reserved extension name: ${extension.name}`);
+    validateChatExtensions([...registry.snapshot().installed(), extension]);
     registry.install(extension);
   }
   return registry;

@@ -115,7 +115,7 @@ Durable stores the model and thinking level in its agent document. Omit override
 | `/skills`, `/skill:name [request]` | List skills / load full instructions as model input |
 | `/extensions` | List selected Durable extensions and tools |
 
-Commands are local except `/skill:name`, `/steer` and `/followup`, which admit model input. Login and opening a session can also resume existing work. Read-only commands remain available during work. Reset, settings, session and logout changes require no unfinished foreground or background work. `/login` can connect a paused unauthenticated session but refuses actively running work.
+Commands are local except `/skill:name`, `/steer` and `/followup`, which admit model input. Selected extensions may add local commands through the `piD` adapter; `/help` includes them. Their return values never automatically become model input. Login and opening a session can also resume existing work. Read-only commands remain available during work. Reset, settings, session and logout changes require no unfinished foreground or background work. `/login` can connect a paused unauthenticated session but refuses actively running work.
 
 Use `//something` to send `/something` literally. `!` and `!!` have no local-shell meaning.
 
@@ -190,13 +190,13 @@ Relative `--skill` and `--extension` paths resolve from the shell's launch direc
 
 Normal chat startup automatically loads trusted extensions from `~/.config/pi-d/extensions/`, or `$XDG_CONFIG_HOME/pi-d/extensions/` when the XDG base is absolute. Top-level `.ts`, `.js`, `.mjs` and `.cjs` files are loaded in name order. Child directories load the first entry point among `index.ts`, `index.js`, `index.mjs`, `index.cjs`. Hidden entries, `.d.ts`, `node_modules` and deeper directories are not scanned. Symlinks are supported. Project extension directories and `~/.pi/agent` are never auto-loaded.
 
-See the [extension guide](extensions.md) for complete examples and discovery rules. Files must default-export named Durable Extension objects; Pi factories do not work. Placing code in the global extensions directory trusts it to execute with full account permissions. Tools, sections, hooks, wrappers and tasks use the unchanged registry. Names must be unique and cannot replace `coding-tools` or `pi-d-prompt`.
+See the [extension guide](extensions.md) for complete examples and discovery rules. Files must default-export named Durable Extension objects; Pi factories do not work. Placing code in the global extensions directory trusts it to execute with full account permissions. Tools, sections, hooks, wrappers and tasks use the unchanged registry. Optional `piD` contributions add local slash commands (with help/completion) and styled footer status; settings remain extension-owned native Durable documents. Names must be unique and cannot replace `coding-tools` or `pi-d-prompt`; extension commands cannot shadow built-ins or each other.
 
 `--extension` is repeatable and adds files after global entries. Canonical file paths are deduplicated before loading. `--no-extensions` skips automatic discovery but still loads explicit `--extension` files. Help, model listing, login/logout and the offline demo never load extensions. Invalid discovered extensions fail startup rather than being silently ignored.
 
 Restart after code changes and keep the same trusted files globally available or explicitly supplied for recovery. The `pi-d.loaded-extensions` document stores names, never executable paths. Missing prior extensions or task definitions keeps unfinished work paused; `/status` identifies them. An idle reopen can omit extensions. Names do not prove code-version compatibility, and older stores may not record them.
 
-pi-d supplies no executable project-extension discovery, package installer, hot reload, Pi UI/command/provider facade or module-level shutdown callback. Manage resources inside invocations, honor cancellation, and avoid unmanaged processes, sockets, watchers or timers at module scope.
+pi-d supplies no executable project-extension discovery, package installer, hot reload, Pi compatibility facade, arbitrary widgets/provider registration or module-level shutdown callback. The [local command/footer API](extensions.md#local-commands-and-footer-status) is a small presentation adapter around native Durable handles. Footer subscriptions are owned by the mounted session and cleaned up on handoff/shutdown. Manage resources inside invocations, honor cancellation, and avoid unmanaged processes, sockets, watchers or timers at module scope.
 
 ## Durability and failure limits
 

@@ -121,7 +121,7 @@ test("cancellation or failed opening leaves the current session observed, restor
     assert.equal(f.app.ui.composer.editor.getExpandedText(), "/session-new cancelled\n\nA draft after cancellation.");
     assert.equal((await unused!.harness.closed).reason, "closed"); await assert.rejects(access(`${unused!.file}.lock`), { code: "ENOENT" });
     t.mock.method(f.first.sessions!, "open", async () => { throw new Error("Session is already open: fixture"); });
-    await f.send("/session-new unavailable"); await until(() => !f.app.ui.busy);
+    await f.send("/session-new unavailable"); await until(() => !f.app.ui.busy); await f.terminal.flush();
     assert.equal(f.app.chat, f.first); assert.equal(f.app.ui.unavailable, false); assert.match(f.terminal.text(), /already open/);
     assert.equal(f.app.ui.composer.editor.getExpandedText(), "/session-new unavailable");
     await f.send("Old input."); await f.first.conversation.waitForIdle(context); await f.terminal.flush();

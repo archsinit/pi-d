@@ -59,16 +59,74 @@ The stock registry also accepts native `hooks`, `wraps` and `tasks`. `hook(Gener
 - `node_modules/@earendil-works/pi-durable/dist/harness/tool.d.ts`: tool hooks.
 - `node_modules/@earendil-works/pi-durable/README.md`: native API overview.
 
+## Local commands and footer status
+
+pi-d also accepts an optional **`piD`** field on a Durable extension object. This is a small host UI adapter, not Pi's `ExtensionAPI` and not a replacement for Durable's registry. Existing extensions need no changes. Use the typed identity helper from **`pi-d-chat/extensions`**, supplied by the loader even when the extension lives outside the installation:
+
+```ts
+import { defineChatExtension } from "pi-d-chat/extensions";
+import { defineDoc } from "@earendil-works/pi-durable";
+
+const Label = defineDoc<{ text: string }>({
+  kind: "session-label.text", version: 1, scope: "session",
+  initial: () => ({ text: "" }),
+});
+
+export default defineChatExtension({
+  name: "session-label",
+  piD: {
+    commands: [{
+      name: "label",
+      description: "Set a session footer label; no text clears it",
+      argumentHint: "[text]",
+      async execute(argument, api) {
+        await api.harness.commit(async (tx) => {
+          (await tx.doc(Label)).text = argument;
+        }, api.context);
+        api.notify(argument ? "Session label set." : "Session label cleared.");
+      },
+    }],
+    async footer(api) {
+      const text = (await api.harness.snapshot(Label, api.context))?.text;
+      return text ? [{ text, tone: "cyan" }] : [];
+    },
+  },
+});
+```
+
+`defineChatExtension()` accepts the same native `tools`, `sections`, `hooks`, `wraps` and `tasks` as Durable's `defineExtension()`. It only adds types for `piD`; the returned object still installs directly into the stock registry. JavaScript can instead export a plain named object with the same shape. Other Durable hosts ignore the optional field.
+
+### Command contract
+
+- `piD.commands` is an array of `{ name, description, argumentHint?, complete?, execute }`. Names must match `[a-z][a-z0-9_-]*`, without `/`. Built-ins, duplicate names within/across installed extensions and invalid declarations fail startup. The `skill:` namespace is unavailable to extensions; there is no shadowing or load-order winner.
+- Only the current conversation's **natively selected** extensions contribute commands, help entries and completions. `/help` includes them and `/extensions` lists their commands/footer capability.
+- `execute(argument, api)` receives trimmed arguments and a context with `harness`, `conversation`, `signal`, an abort-aware native Chord `context`, and `notify(message)` for a plain-text notice during that invocation (ignored after completion/cancellation). Use these native handles for committed state, not sidecar session files or a second scheduler. Session-scoped documents persist across reopen and `/new`, but are independent in a different session file.
+- Commands work locally while a model is running or authentication/recovery is paused. No input or callback return value is automatically sent to the model or saved as a chat entry. `//command` still sends literal slash-prefixed text. Callbacks have full account/native API permissions; this is not an effects sandbox. Enforce idle-only requirements yourself if your command needs them.
+- Optional `complete(prefix, api)` receives the same native context, without `notify`, and returns `{ value, label, description? }[]` or `null`, synchronously or asynchronously. For example: `complete: (prefix) => ["on", "off"].filter(value => value.startsWith(prefix)).map(value => ({ value, label: value }))`. Completion text is sanitized, failures are contained, and cancelled results are discarded.
+- Escape/Ctrl+C cancels an active command. Honor `api.signal`/`api.context`, release invocation resources in `finally`, and finish promptly: shutdown joins an in-flight command. A thrown command error restores its draft; cancellation does not undo effects already committed.
+
+### Footer contract
+
+- `piD.footer(api)` returns an array of **`FooterStatus`** objects, or `undefined` to contribute nothing. It receives `harness`, `conversation`, `signal` and the abort-aware native `context`. Read committed state with `snapshot()`; a missing document should be treated as your default without creating it.
+- Each item has plain `text`, optional `tone` (`text`, `muted`, `dim`, `green`, `cyan`, `gold`, `red`, `violet`), `bold` and `strikethrough`. The host strips terminal controls, flattens whitespace, and clips the shared contribution area to at most one third of the footer. Short items survive long model names and remain visible beside notices; normal activity, reasoning and usage remain host-owned. There is no raw ANSI, complete-footer replacement or arbitrary widget access.
+- Callbacks run asynchronously **outside Durable's mutation line**, initially on mount, after native commits (including custom session documents), and after local commands. Refreshes are serialized and coalesced. Keep callbacks read-only, fast and free of effects: writing state here can cause a refresh loop. They may run often during streaming; there is no polling timer.
+- Providers follow native extension-selection order; items follow their returned order. Deselection clears their items on the next refresh. A failed/invalid provider loses only its own items and reports a generic failure notice without exposing its error body; it does not stop the chat or other providers.
+- Each mounted session owns its commit subscription and cancellation signal. Switching sessions or closing detaches it, aborts callbacks, ignores late results and joins in-flight work before closing the Harness. Honor cancellation; an uncooperative callback can delay that cleanup. No UI callbacks run in headless native task recovery, or while a session is only being listed.
+
+The public TypeScript contracts are shipped at `pi-d-chat/extensions`. This initial UI API deliberately does not add arbitrary dialogs, shortcuts, provider registration, lifecycle events, hot reload or a Pi compatibility runtime.
+
+## SDK locations
+
 In a checkout these paths are relative to pi-d, **not necessarily the conversation workspace**. npm may hoist dependencies in an installation; declarations belong to the installed SDK packages, not a fixed `pi-d-chat/node_modules` path. For a global install, find the package under `npm root -g`. The app's `src/coding.ts` and `test/coding.test.ts` are working examples in the source checkout; installations ship `dist/coding.js` and this guide instead. Built-in task definitions cannot be replaced. Extension names must be unique and may not replace `coding-tools` or `pi-d-prompt`.
 
 ## Loading and lifecycle
 
 - jiti loads local TypeScript/JavaScript without a build step. The loader binds exported imports from the host's pinned `pi-durable`, `pi-ai`, `pi-tui`, `chord` and `typebox`, including exported subpaths. Extensions outside the checkout do not need their own copy of those SDKs. Other dependencies must be installed beside the extension.
 - Installation and selection use the **unmodified stock registry**. Normal conversations use installed extensions by default; explicit native agent filters are respected. The host adds no parallel scheduler, session runtime or saved transcript.
-- Restart after editing extension code. There is no hot reload, package installer, auto-discovery of executable project extensions, or Pi-style command/UI/provider registration facade. Durable's Extension format does not define app slash commands.
+- Restart after editing extension code. There is no hot reload, package installer, auto-discovery of executable project extensions, or Pi-style command/UI/provider registration facade. App commands/footer contributions use the optional `piD` adapter above; native Durable alone does not define them.
 - Keep the same `--extension` arguments when recovering work. The native session document `pi-d.loaded-extensions` stores **names only**, not executable paths. If unfinished work lacks a previously loaded extension or a task definition, automatic recovery stays paused; `/status` identifies missing names and blocked tasks. Restart with the trusted files available in the global extensions directory or explicitly supplied. An idle reopen may deliberately omit extensions. This is a conservative readiness check, not a guarantee of code-version compatibility; older stores may not have recorded names.
 - The startup registry loads the trusted global and explicit extensions once; session selection reads native metadata without starting a Harness or recovering tasks. Opening a selected session uses that registry, then checks authentication and recovery readiness. Stored names never cause module discovery or execution.
-- Do not start unmanaged processes, sockets, watchers or timers at module scope. Use native task/tool contexts, honor `context.abortSignal`, and clean up your resources in their invocation. This host does not invent a shutdown callback for module-level resources.
+- Do not start unmanaged processes, sockets, watchers or timers at module scope. Use native task/tool or local command contexts, honor `context.abortSignal`, and clean up your resources in their invocation. Footer callbacks are read-only and host-managed. There is no shutdown callback for module-level resources.
 
 ## Trust and effects
 
