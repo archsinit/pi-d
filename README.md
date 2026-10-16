@@ -2,7 +2,7 @@
 
 pi-d is a terminal coding agent built on [pi-durable](https://github.com/earendil-works/pi/tree/main/packages/durable), with a [btop](https://github.com/aristocratos/btop)-inspired interface. It can read files, run shell commands and edit code. Durable **automatically compacts older context in the background** and saves conversations and unfinished work in SQLite so you can resume them later.
 
-The upstream Harness runs unchanged. pi-d adds the fullscreen interface, session controls, login storage and instruction discovery.
+The upstream Harness runs unchanged. pi-d adds the fullscreen interface, session controls, login storage, instruction discovery and built-in native subagent orchestration.
 
 **Tools and trusted extensions run with your account's permissions. There is no sandbox or per-call approval.** Review changes and isolate unfamiliar projects.
 
@@ -16,7 +16,7 @@ Offline renderer capture with scripted output.
 - Keep separate project sessions with saved models, reasoning levels and workspaces.
 - Steer a running task or queue a follow-up through Durable.
 - Load AGENTS instructions, skills and trusted Durable extensions, including local commands, UI-only messages/toasts and footer status.
-- Experiment with [opt-in subagents](docs/subagents.md): explicit per-worker skills/extensions, normal coding tools without worker-count/time/call budgets, non-nesting native tasks, nonblocking coordinator steering/cancellation and an isolated launch helper. Disabled by default.
+- Delegate with [built-in subagents](docs/subagents.md): explicit per-worker skills/extensions, normal coding tools without worker-count/time/call budgets, non-nesting native tasks and nonblocking coordinator steering/cancellation. Available on normal startup without extension setup; workers start only when delegated. An isolated launch helper is also available.
 
 ## Quick start
 
@@ -103,7 +103,7 @@ The [full comparison](docs/comparison.md) covers commands, authentication, tools
 
 Credentials, global instructions/skills and trusted extensions live in `~/.config/pi-d/`. Conversations live in `~/.local/share/pi-d/`. Absolute `XDG_CONFIG_HOME` and `XDG_DATA_HOME` replace those bases. Credentials are plaintext private files, separate from session databases. pi-d does not import Pi's credentials, settings or conversations.
 
-Place trusted extension files or folders with an `index.ts` / `index.js` / `index.mjs` / `index.cjs` entry point in `~/.config/pi-d/extensions/` to load them automatically from any workspace. `--no-extensions` disables automatic loading; `--extension path` still adds explicit files. Project extension folders are not auto-loaded. Extensions can contribute local commands with help/completion, labeled scrollback messages, top-left notifications and styled footer items through the optional `piD` API, while keeping their state and behavior in native Durable documents/hooks. See the [extension guide](docs/extensions.md) for examples, trust and discovery rules.
+Place trusted extension files or folders with an `index.ts` / `index.js` / `index.mjs` / `index.cjs` entry point in `~/.config/pi-d/extensions/` to load them automatically from any workspace. `--no-extensions` disables automatic external loading, not built-in tools/subagents; `--extension path` still adds explicit files. Project extension folders are not auto-loaded. Extensions can contribute local commands with help/completion, labeled scrollback messages, top-left notifications and styled footer items through the optional `piD` API, while keeping their state and behavior in native Durable documents/hooks. See the [extension guide](docs/extensions.md) for examples, trust and discovery rules.
 
 **Recovery can repeat model requests and consume quota or incur charges.** Cancelling a task does not undo file or shell effects. Missing login or recovery extensions keeps work paused; use `/status` to inspect it.
 
@@ -113,7 +113,7 @@ Keep these limits in mind:
 - Back up a closed database. Copying a live SQLite main file can omit its write-ahead log.
 - Reset and compaction retain earlier entries in storage, but the display shows only active context. There is no archive browser or export command.
 - The footer's `ctx ~` estimates active context. It does not measure remaining subscription quota or cumulative usage.
-- pi-d has no image-upload UI, manual `/compact` or package installer. [Background delegation](docs/subagents.md) is an optional experimental extension, not a built-in orchestration mode. Recovery from host power loss is not guaranteed.
+- pi-d has no image-upload UI, manual `/compact` or package installer. [Background delegation](docs/subagents.md) is built in, using native Durable tasks and child conversations; workers do not run as separate services. Recovery from host power loss is not guaranteed.
 
 Read [Usage and safety](docs/usage.md) for paths, authentication, recovery and discovery rules. Read the [extension guide](docs/extensions.md) before loading executable files. Extensions use Durable's format and have full account access.
 

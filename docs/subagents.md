@@ -1,14 +1,20 @@
-# Opt-in subagents
+# Built-in subagents
 
-An **experimental stock Durable extension**, disabled by default. Importing it starts no work. It does not replace pi-d's runtime, launcher or normal configuration.
+Subagent orchestration is **built into normal pi-d startup**. No extension installation, configuration symlink or activation flag is needed. It uses stock Durable tasks and child conversations inside the existing pi-d process, not a separate service or runtime. Startup registers the capability but starts no workers or model requests.
 
-Workers have the normal **read, write, edit and bash** tools, subject to the parent's native tool filters. The orchestrator explicitly assigns additional **skills and extensions per worker**; nothing custom is inherited by default. There is **no extension-imposed worker-count, batch-count, concurrency, time, tool-call or saved-report limit**. Only the main orchestrator may delegate or manage workers: no nested subagents. Delegation, messaging and result inspection do not wait for worker execution; the orchestrator can steer active workers or interrupt/cancel individual workers, whole jobs or every active job.
+Workers have the normal **read, write, edit and bash** tools, subject to the parent's native tool filters. The orchestrator explicitly assigns additional **skills and extensions per worker**; nothing custom is inherited by default. There is **no pi-d-imposed worker-count, batch-count, concurrency, time, tool-call or saved-report limit**. Only the main orchestrator may delegate or manage workers: no nested subagents. Delegation, messaging and result inspection do not wait for worker execution; the orchestrator can steer active workers or interrupt/cancel individual workers, whole jobs or every active job.
 
 **Not a sandbox:** workers, tools and trusted code have this account's OS permissions. They can modify files, run commands and access paths outside the workspace. Cancellation does not undo earlier effects, and cannot forcibly stop uncooperative external code. Unlimited work can consume unlimited quota and substantial machine resources. Avoid conflicting concurrent edits.
 
+## Normal startup
+
+Start `pi-d` normally, or use `pi-d --resume` to choose a saved session. The coordinator has `delegate`, `agent_results`, `agent_stop` and `agent_message`; local `/agents`, `/agent-show` and `/agent-stop` are available without model preflight. Workers start only when delegated. Existing running sessions need a restart to load updated host code.
+
+`--no-extensions` skips automatic **external** extension discovery, not built-in tools or subagents. Normal native conversation/tool filters still apply. Custom workers remain headless and non-nesting, with no automatic inheritance of additional skills or extensions.
+
 ## Isolated experiment
 
-From this experimental checkout, after `npm ci --ignore-scripts`:
+For optional disposable HOME/XDG/session/workspace isolation, from a checkout after `npm ci --ignore-scripts`:
 
 ```sh
 npm run subagents:isolated -- --check  # Create private state; print its plan only
@@ -17,7 +23,7 @@ npm run subagents:isolated            # Create and launch a different fresh expe
 node bin/pi-d-subagents.mjs --experiment /absolute/path/printed/by/the/helper
 ```
 
-The helper uses this checkout's launcher without changing your normal launcher, branch or global installation. It creates a private temporary workspace, fixed SQLite session, separate HOME/XDG config/data/cache, disables automatic extension discovery, and explicitly loads this extension alongside stock pi-d built-ins. It does not inherit API keys, OAuth/cloud credential variables, SSH agent sockets, proxies, Node preloads or caller PATH/Git configuration. Reopening requires its private marker and rejects symlinked state paths; arbitrary pi-d flags are not accepted.
+The helper uses this checkout's launcher without changing your normal launcher, branch or global installation. It creates a private temporary workspace, fixed SQLite session, separate HOME/XDG config/data/cache, disables automatic external extension discovery, and uses the built-in subagents without loading any explicit extension. It does not inherit API keys, OAuth/cloud credential variables, SSH agent sockets, proxies, Node preloads or caller PATH/Git configuration. Reopening requires its private marker and rejects symlinked state paths; arbitrary pi-d flags are not accepted.
 
 Fresh experiments have **no login**. Local commands work without credentials. If wanted, sign in with `/login` in this separate configuration; live use consumes real quota. Tests do not copy or use everyday credentials.
 
@@ -25,26 +31,20 @@ Temporary state is retained for reopening but may eventually be removed by the O
 
 Configuration/workspace separation does **not** revoke OS access, protect valuable files from commands, neutralize parent-process preloads or isolate machine-level services. Do not use unfamiliar agents on valuable data.
 
-## Explicit loading and packaging
+## Packaging and migration from manual loading
 
-The helper is preferred. An intentional direct invocation is:
+Subagents are registered by the host alongside the coding tools, using Durable's native extension format internally. This is an implementation detail, not a separately installed add-on. Source and compiled package launches have the same built-in capability, including with external discovery disabled:
 
 ```sh
 node bin/pi-d.mjs --no-extensions \
-  --extension /absolute/path/to/this/checkout/src/subagents/index.ts \
   --session /absolute/path/to/a/separate.sqlite --cwd /path/to/disposable/workspace
 ```
 
-Unlike the helper, that command uses the shell's normal HOME/configuration and credentials.
+Unlike the isolated helper, that command uses the shell's normal HOME/configuration and credentials.
 
-A built package exports **`pi-d-chat/subagents`** with types. A trusted external TypeScript wrapper can use the host's source/compiled extension, including isolated global-prefix installs:
+**Remove old `pi-d-subagents` configuration entries/symlinks and explicit loading arguments**, including wrappers that export `createSubagentsExtension()`. A second registration fails startup with a migration message rather than overriding or duplicating the built-in. No existing job/worker identity, saved report or conversation is changed by removing redundant loading configuration. Restart pi-d to load the built-in; required explicitly assigned third-party extensions must still be present for recovery. Executable paths are not saved in SQLite.
 
-```ts
-import { createSubagentsExtension } from "pi-d-chat/subagents";
-export default createSubagentsExtension();
-```
-
-Load with `--extension /absolute/path/to/wrapper.ts`. Do not also load the default extension: duplicate `pi-d-subagents` names fail startup. The compiled direct entry is `dist/subagents/index.js`; the helper chooses source or compiled code automatically. No new dependency, global registration or automatic startup hook is required. Restart with the trusted extension to recover; executable paths are not saved in SQLite.
+The package still exports **`pi-d-chat/subagents`** and `createSubagentsExtension()` with types for programmatic embedding in other stock Durable hosts. Do not register another copy in pi-d itself. No new dependency, global package installation or background service is needed.
 
 ## Coordinator tools
 
@@ -58,7 +58,7 @@ For example:
 
 - **`agent_message({ jobId, worker, message, mode? })`** queues nonblank input for one **1-based**, active worker in the calling conversation's job. `mode` is `"steer"` (default) or `"followUp"`. Returns promptly after durable native inbox admission, **not** consumption or completion; see below.
 
-All four orchestration tools are model-only and unavailable to workers. Explicit ownership guards also reject worker calls if trusted code bypasses tool selection. This prevents recursive delegation through this extension; it is not an OS permission boundary against arbitrary trusted code or shell programs.
+All four orchestration tools are model-only and unavailable to workers. Explicit ownership guards also reject worker calls if trusted code bypasses tool selection. This prevents recursive delegation through the built-in orchestration tools; it is not an OS permission boundary against arbitrary trusted code or shell programs.
 
 Jobs survive ordinary coordinator Escape/`/interrupt` and ordinary idle waits. They **do not inject reports or new parent inputs** when finished. There is no daemon: closing the Harness stops execution; reopening with trusted code, provider access and recovery readiness can resume it.
 
@@ -154,12 +154,12 @@ Version-1 and version-2 jobs/workers and metadata migrate through native migrati
 
 **Already-running v1 foreground jobs retain their immutable native tool ownership.** Their replayed delegate must finish waiting, or returning would implicitly abort their owned work. Let those jobs settle or use local `/agent-stop`/native interruption first. Only newly admitted jobs have the always-nonblocking background ownership. Old background work remains model-cancellable after upgrading; no existing work is silently reparented, discarded or automatically cancelled.
 
-Legacy `createSubagentsExtension({ concurrency, maxTasks, timeoutMs, maxToolCalls, maxReportBytes })` wrappers still load, but **all these options are ignored**. Deprecated `DEFAULT_POLICY` fields are now `null` (unlimited), not configurable execution caps.
+For other Durable hosts embedding `createSubagentsExtension({ concurrency, maxTasks, timeoutMs, maxToolCalls, maxReportBytes })`, **all these legacy options are ignored**. In pi-d, remove manual wrappers because the capability is already built in. Deprecated `DEFAULT_POLICY` fields are now `null` (unlimited), not configurable execution caps.
 
 ## Verification
 
 Faux providers and temporary HOME/XDG/workspaces/memory/SQLite only; no live credentials or ordinary sessions. Tests cover explicit per-worker skill/extension differences, omitted/empty selections, parent-only validation, full/explicit-only/externally configured skills, native hooks/wrappers/tools, caller/deferred filters, headless mixed UI extensions, and more than the old batch/concurrency/call limits, overlapping batches beyond reference retention, nonblocking snapshots/message acknowledgements, native steering/follow-up boundaries and queue modes, full Unicode messages, scope/target/caller/nesting guards, completion/cancellation races, unanswered messages, model/local individual and whole-job stops, actual file/shell work, cancellation/draining, scope/nesting guards, full Unicode reports, failures, UI inspection/completion/footer and helper guards.
 
-SQLite tests cover message admission/placement/answer/receipt recovery, replay after worker settlement, queued-message cancellation without new model requests, lost commit acknowledgements, saved skill contents after file changes, SIGKILL, missing-extension readiness, long downtime and migration of genuine v1/v2 native shapes/ownership. Packaging tests exercise compiled exports, external wrappers, actual faux delegation/messaging with selected/unselected capabilities, isolated local/global-prefix installs and helper PTYs.
+SQLite tests cover message admission/placement/answer/receipt recovery, replay after worker settlement, queued-message cancellation without new model requests, lost commit acknowledgements, saved skill contents after file changes, SIGKILL, missing-extension readiness, long downtime and migration of genuine v1/v2 native shapes/ownership. Startup tests verify built-in registration without external discovery/configuration, zero work before delegation, reserved-name migration errors and recovery of a prior opt-in job without manual loading. Packaging tests exercise compiled built-in startup and exports, external extensions, actual faux delegation/messaging with selected/unselected capabilities, isolated local/global-prefix installs and helper PTYs.
 
 Live providers, actual cost/quota, hostile external code, power-loss durability and other platforms remain unverified. There is no automatic report injection, worker-to-worker messaging, cancelled-worker resume/retry, multi-model router, worktree manager, dashboard or permission sandbox.

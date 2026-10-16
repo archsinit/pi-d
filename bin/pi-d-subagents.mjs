@@ -1,13 +1,13 @@
 #!/usr/bin/env -S node --disable-warning=ExperimentalWarning
 // Explicit experiment launcher, never used by bin/pi-d.mjs. Configuration isolation is not an OS sandbox.
-import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { lstatSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { delimiter, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 import { spawn } from "node:child_process";
 
-const help = `pi-d subagents · isolated, opt-in experiment
+const help = `pi-d subagents · isolated workspace for built-in subagents
 
 Usage: node bin/pi-d-subagents.mjs [--experiment path] [--check]
 
@@ -16,7 +16,7 @@ created by this helper. --check prints the launch plan without opening SQLite,
 loading extensions, starting a model, or signing in. No arbitrary pi-d flags.
 
 The child gets separate HOME, XDG config/data/cache, a fresh workspace, a fixed
-session, only the explicit subagent extension, and no inherited API keys, OAuth,
+session, built-in subagents without external extensions, and no inherited API keys, OAuth,
 proxy, Node-preload or cloud-credential environment. The normal launcher and
 configuration are not changed. Sign in explicitly inside the experiment if wanted.
 Workers and the coordinator have normal coding tools and account permissions.
@@ -58,15 +58,13 @@ async function main() {
     writeFileSync(join(workspace, "README.md"), "# Isolated subagent experiment\n\nA disposable workspace, not a sandbox. Workers have normal coding tools and no execution budgets. Only the coordinator may delegate; ask it to stop individual workers or whole jobs when needed.\n", { mode: 0o600, flag: "wx" });
     writeFileSync(join(experiment, marker), signature, { mode: 0o600, flag: "wx" });
   }
-  const source = new URL("../src/subagents/index.ts", import.meta.url);
-  const extension = fileURLToPath(existsSync(source) ? source : new URL("../dist/subagents/index.js", import.meta.url));
   const launcher = fileURLToPath(new URL("./pi-d.mjs", import.meta.url));
-  const args = ["--disable-warning=ExperimentalWarning", launcher, "--no-extensions", "--extension", extension, "--session", session, "--cwd", workspace, "--no-animation"];
+  const args = ["--disable-warning=ExperimentalWarning", launcher, "--no-extensions", "--session", session, "--cwd", workspace, "--no-animation"];
   const env = { HOME: home, XDG_CONFIG_HOME: config, XDG_DATA_HOME: data, XDG_CACHE_HOME: cache, PWD: workspace,
     PATH: [dirname(process.execPath), "/usr/bin", "/bin", "/usr/sbin", "/sbin"].join(delimiter),
     GIT_CONFIG_NOSYSTEM: "1", GIT_CONFIG_GLOBAL: join(home, ".gitconfig") };
   for (const key of ["TERM", "COLORTERM", "LANG", "LC_ALL", "LC_CTYPE", "TZ"]) if (process.env[key] !== undefined) env[key] = process.env[key];
-  const plan = { experiment, workspace, session, extension, executable: process.execPath, args, environment: env };
+  const plan = { experiment, workspace, session, executable: process.execPath, args, environment: env };
   if (values.check) { console.log(JSON.stringify(plan, null, 2)); return; }
   const quote = (value) => `'${value.replaceAll("'", "'\\''")}'`;
   const reopen = [process.execPath, fileURLToPath(import.meta.url), "--experiment", experiment].map(quote).join(" ");

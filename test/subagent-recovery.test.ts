@@ -10,6 +10,8 @@ import { createRegistry, Harness, ROOT_CONVERSATION_ID, type DocumentId, type St
 import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
 import { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node";
 import { createSubagentsExtension } from "../src/subagents/index.ts";
+import { codingRegistry } from "../src/coding.ts";
+import { Resources } from "../src/resources.ts";
 import { Jobs, JOB_KIND, WORKER_KIND, Worker } from "../src/subagents/state.ts";
 import { readJob, resultView } from "../src/subagents/view.ts";
 import { openPersistentChat } from "../src/session.ts";
@@ -127,7 +129,7 @@ test("a never-submitted worker still runs after arbitrarily long downtime", { ti
   } finally { await harness.close(context); await rm(directory, { recursive: true, force: true }); }
 });
 
-test("missing subagent code pauses host recovery; restoring trusted code resumes the same background job", { timeout: 15000 }, async () => {
+test("missing definitions pause recovery; built-in startup resumes an existing opt-in job without extension setup", { timeout: 15000 }, async () => {
   const directory = await realpath(await mkdtemp(join(tmpdir(), "pi-d-agent-missing-"))), file = join(directory, "session.sqlite");
   const reached = Promise.withResolvers<void>(), stop = Promise.withResolvers<void>();
   const first = testModels({ responses: Array.from({ length: 20 }, () => async (transcript, options) => {
@@ -140,15 +142,24 @@ test("missing subagent code pauses host recovery; restoring trusted code resumes
   let chat = await openPersistentChat(file, first.models, { defaults: { model }, cwd: directory, registry, env, onLockLost: lockLost });
   try {
     const input = await chat.conversation.submit({ type: "input", content: "Start background work." }, context); assert.equal((await input.wait(context)).status, "done"); await reached.promise;
-    const jobId = (await chat.harness.snapshot(Jobs, chat.conversation.id, context))!.recent[0]; await chat.close();
+    const jobId = (await chat.harness.snapshot(Jobs, chat.conversation.id, context))!.recent[0];
+    const previous = await readJob(chat.harness, chat.conversation.id, jobId, context); await chat.close();
     const second = testModels({ responses: [fauxAssistantMessage("Recovered background report.")] });
     chat = await openPersistentChat(file, second.models, { registry: createRegistry(), env, onLockLost: lockLost });
     await assert.rejects(requireRecoveryReady(chat), /Recovery is blocked.*pi-d-subagents/);
     assert.match(await sessionStatus(chat, second.models), /missing_task/); assert.equal(second.faux.state.callCount, 0);
     assert.equal((await chat.harness.inspect(context)).scheduling, "paused"); await chat.close();
-    chat = await openPersistentChat(file, second.models, { registry, env, onLockLost: lockLost }); await requireRecoveryReady(chat); chat.harness.resume();
+    const resources = new Resources(join(directory, "config"), [], directory);
+    const builtin = await codingRegistry(resources, await resources.extensionPaths([], false));
+    chat = await openPersistentChat(file, second.models, { registry: builtin, env, onLockLost: lockLost }); await requireRecoveryReady(chat); chat.harness.resume();
     assert.equal((await chat.harness.waitForTask(jobId, context)).state.outcome.status, "completed");
     assert.equal((await chat.harness.snapshot(Jobs, chat.conversation.id, context))!.recent.length, 1);
+    const recovered = await readJob(chat.harness, chat.conversation.id, jobId, context);
+    assert.deepEqual(recovered.workers.map((worker) => worker.id), previous.workers.map((worker) => worker.id));
+    assert.equal(resultView(recovered.job, recovered.workers).workers[0].conversationId,
+      previous.workers[0].state.status === "running" && previous.workers[0].state.checkpoint.phase === "run" ? previous.workers[0].state.checkpoint.conversationId : undefined);
+    assert.equal(resultView(recovered.job, recovered.workers).workers[0].report, "Recovered background report.");
+    for (const name of ["delegate", "agent_results", "agent_stop", "agent_message"]) assert((await chat.conversation.agent(context)).tools.some((tool) => tool.name === name));
     assert.equal(second.faux.state.callCount, 1);
   } finally { stop.resolve(); await chat.close(); await rm(directory, { recursive: true, force: true }); }
 });

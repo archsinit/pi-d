@@ -6,6 +6,7 @@ import { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node";
 import { CodingTools } from "@earendil-works/pi-durable/tools";
 import { createJiti } from "jiti";
 import { validateChatExtensions } from "./extension-ui.ts";
+import Subagents from "./subagents/index.ts";
 import { expandPath, loadAgents, Resources, skillPrompt, skillSource, xml, type SkillSourceExtension } from "./resources.ts";
 
 // Adapted from Pi 1.2.0's standard prompt/tool contributions; see NOTICE.
@@ -66,7 +67,7 @@ async function packageManifest(name: string): Promise<URL> {
 
 export async function codingRegistry(resources: Resources, paths: string[] = [], onReport?: (message: string) => void) {
   const registry = createRegistry();
-  registry.install(CodingTools); registry.install(codingPrompt(resources, onReport));
+  registry.install(CodingTools); registry.install(codingPrompt(resources, onReport)); registry.install(Subagents);
   if (!paths.length) return registry;
   // Reuse the host SDK even for an extension outside this checkout, without a global install.
   const packages = ["@earendil-works/pi-durable", "@earendil-works/pi-ai", "@earendil-works/pi-tui", "@earendil-works/chord", "typebox"];
@@ -89,6 +90,7 @@ export async function codingRegistry(resources: Resources, paths: string[] = [],
   for (const path of paths) {
     const extension = await loader.import<Extension>(expandPath(path), { default: true });
     if (!extension || typeof extension !== "object" || typeof extension.name !== "string" || !extension.name.trim()) throw new Error(`Extension ${path} must default-export a named Durable Extension object.`);
+    if (extension.name === Subagents.name) throw new Error(`Subagents are built in to pi-d. Remove the redundant pi-d-subagents configuration entry or --extension argument: ${path}`);
     if (registry.snapshot().extension(extension.name)) throw new Error(`Duplicate or reserved extension name: ${extension.name}`);
     validateChatExtensions([...registry.snapshot().installed(), extension]);
     registry.install(extension);

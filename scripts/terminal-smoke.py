@@ -97,6 +97,8 @@ with tempfile.TemporaryDirectory(prefix="pi-d-startup-") as directory:
             wait_for(b"ChatGPT is not connected")
             assert process.poll() is None
             assert not termios.tcgetattr(slave)[3] & termios.ICANON
+            os.write(master, b"/agents\r")
+            wait_for(b"No subagent jobs yet")
             os.write(master, b"/reasoning max\r")
             wait_for(b"Reasoning: max.")
             os.write(master, b"/help\r")

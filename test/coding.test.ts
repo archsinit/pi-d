@@ -40,7 +40,8 @@ test("actual stock coding tools edit a temporary workspace and show committed li
   const chat = await openPersistentChat(join(directory, "chat.sqlite"), models, { defaults: { model }, registry, env: codingEnv, defaultCwd: cwd, onLockLost: lockLost });
   const terminal = new TestTerminal(100, 30), app = await mountChat(chat, terminal, false);
   try {
-    assert.deepEqual((await chat.conversation.agent(context)).tools.map((tool) => tool.name), ["read", "write", "edit", "bash"]);
+    assert.deepEqual((await chat.conversation.agent(context)).tools.map((tool) => tool.name).sort(),
+      ["agent_message", "agent_results", "agent_stop", "bash", "delegate", "edit", "read", "write"]);
     terminal.send("Inspect and update the fixture."); terminal.send("\r");
     await waitForToolOutput(chat, terminal, "COMMITTED-LIVE-TOOL-OUTPUT");
     assert.match(terminal.text(), /COMMITTED-LIVE-TOOL-OUTPUT/);

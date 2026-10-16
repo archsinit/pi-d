@@ -65,7 +65,7 @@ async function show(argument: string, api: ChatCommandContext) {
   } finally { viewState.dispose(); }
 }
 
-/** Opt-in only. Legacy factory budget options are ignored; importing starts no work. */
+/** Built into pi-d via the native registry. Legacy budget options are ignored; importing starts no work. */
 export function createSubagentsExtension(_legacyOptions: Partial<SubagentPolicy> = {}): ChatExtension {
   const delegate = defineTool({
     name: "delegate", callers: ["model"], replay: "safe", executionMode: "sequential",

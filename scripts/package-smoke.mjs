@@ -44,11 +44,12 @@ const packageSkill = join(config, "skills", "package-review", "SKILL.md");
 await mkdir(join(config, "skills", "package-review"), { recursive: true });
 await writeFile(packageSkill, ["---", "name: package-review", "description: Packaged assignment fixture", "---", "PACKAGED-ASSIGNED-SKILL"].join(String.fromCharCode(10)));
 assert.equal(subagents.name, "pi-d-subagents"); assert.equal(createSubagentsExtension().name, subagents.name); assert.equal(DEFAULT_POLICY.concurrency, null);
-const subagentFile = join(workspace, "configured-subagents.ts");
-await writeFile(subagentFile, 'import { createSubagentsExtension } from "pi-d-chat/subagents"; export default createSubagentsExtension({ concurrency: 1 });');
 await mkdir(join(config, "extensions"), { recursive: true });
 await symlink(extension, join(config, "extensions", "install-probe.ts"));
-const registry = await codingRegistry(resources, await resources.extensionPaths([extension, subagentFile]));
+const builtin = await codingRegistry(resources, await resources.extensionPaths([], false));
+assert(builtin.snapshot().extension("pi-d-subagents"));
+const registry = await codingRegistry(resources, await resources.extensionPaths([extension]));
+assert.equal(registry.snapshot().installed().filter(value => value.name === "pi-d-subagents").length, 1);
 const faux = fauxProvider({ tokensPerSecond: 100000 });
 faux.appendResponses([fauxAssistantMessage(fauxToolCall("install_probe", {}), { stopReason: "toolUse" }), fauxAssistantMessage("Verified offline.")]);
 const models = createModels(); models.setProvider(faux.provider);
@@ -152,6 +153,7 @@ try {
     }
   };
   writeFileSync(extension, `import { defineChatExtension } from "pi-d-chat/extensions";
+import { createSubagentsExtension } from "pi-d-chat/subagents";
 import { defineTool, section } from "@earendil-works/pi-durable";
 import { Type as AIType } from "@earendil-works/pi-ai";
 import { fauxText } from "@earendil-works/pi-ai/providers/faux";
@@ -166,7 +168,7 @@ export default defineChatExtension({ name: "install-probe", piD: {
   } }],
   footer: () => [{ text: "INSTALLED-FOOTER-OK", tone: "cyan" }],
 }, sections: [section("install_probe", () => "INSTALLED-SECTION-OK")], tools: [defineTool({ name: "install_probe", description: "Offline installation probe", parameters: Type.Object({}), execute: async (_args, api) => {
-  if (AIType.String !== Type.String || !Value.Check(Type.String(), "ok") || visibleWidth("ok") !== 2) throw new Error("Host SDK resolution failed.");
+  if (AIType.String !== Type.String || !Value.Check(Type.String(), "ok") || visibleWidth("ok") !== 2 || createSubagentsExtension().name !== "pi-d-subagents") throw new Error("Host SDK resolution failed.");
   return { output: [fauxText("INSTALLED-EXTENSION-OK " + (await api.agent(BACKGROUND_CONTEXT)).cwd)] };
 } })] });`);
   for (const global of [false, true]) {
@@ -185,7 +187,8 @@ export default defineChatExtension({ name: "install-probe", piD: {
     assert.equal(manifest.license, "MIT");
     assert.equal(readFileSync(join(installed, "LICENSE"), "utf8"), readFileSync(join(root, "LICENSE"), "utf8"));
     const plan = JSON.parse(run(process.execPath, [join(installed, "bin/pi-d-subagents.mjs"), "--check"]));
-    assert.equal(plan.extension, join(installed, "dist/subagents/index.js")); assert(plan.experiment.startsWith(temporary + "/"));
+    assert(!("extension" in plan)); assert(!plan.args.includes("--extension")); assert(plan.args.includes("--no-extensions"));
+    assert(plan.experiment.startsWith(temporary + "/"));
     rmSync(plan.experiment, { recursive: true, force: true });
     const requireEntry = join(installed, "package-verification.mjs");
     writeFileSync(requireEntry, verification);
@@ -194,6 +197,6 @@ export default defineChatExtension({ name: "install-probe", piD: {
     // Includes real fullscreen demo, local commands, saved-session/auth gate and terminal restoration.
     run("python3", [join(root, "scripts/terminal-smoke.py"), launcher]);
     run("python3", [join(root, "scripts/subagents-smoke.py"), join(installed, "bin/pi-d-subagents.mjs"), process.execPath]);
-    console.log(`Package passed: ${global ? "global-prefix" : "local dependency"} install, launcher, SQLite, external TypeScript extension, compiled subagents/isolated helper and offline PTYs.`);
+    console.log(`Package passed: ${global ? "global-prefix" : "local dependency"} install, launcher, SQLite, external TypeScript extension, built-in compiled subagents/isolated helper and offline PTYs.`);
   }
 } finally { rmSync(temporary, { recursive: true, force: true }); }

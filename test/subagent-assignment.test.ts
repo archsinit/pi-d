@@ -2,7 +2,6 @@ import assert from "node:assert/strict";
 import { mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { fileURLToPath } from "node:url";
 import test from "node:test";
 import { BACKGROUND_CONTEXT as context } from "@earendil-works/chord/context";
 import type { JsonValue } from "@earendil-works/chord";
@@ -19,7 +18,6 @@ import { chatCommands } from "../src/commands.ts";
 import { Resources } from "../src/resources.ts";
 import { openPersistentChat } from "../src/session.ts";
 import { requireRecoveryReady } from "../src/status.ts";
-import { createSubagentsExtension } from "../src/subagents/index.ts";
 import { JOB_KIND, WORKER_KIND, Jobs, Worker } from "../src/subagents/state.ts";
 import { createReadTool } from "@earendil-works/pi-durable/tools";
 import { readJob, resultView } from "../src/subagents/view.ts";
@@ -35,11 +33,10 @@ async function skill(directory: string, name: string, body: string, manual = fal
   await writeFile(path, `---\nname: ${name}\ndescription: ${name} fixture instructions\n${manual ? "disable-model-invocation: true\n" : ""}---\n${body}`);
   return path;
 }
-async function fixture(respond: FauxResponseFactory, options: { directory?: string; storage?: Storage; loader?: boolean } = {}) {
+async function fixture(respond: FauxResponseFactory, options: { directory?: string; storage?: Storage } = {}) {
   const directory = options.directory ?? await realpath(await mkdtemp(join(tmpdir(), "pi-d-assigned-")));
   const resources = new Resources(join(directory, "config"), [], directory);
-  const registry = await codingRegistry(resources, options.loader ? [fileURLToPath(new URL("../src/subagents/index.ts", import.meta.url))] : []);
-  if (!options.loader) registry.install(createSubagentsExtension());
+  const registry = await codingRegistry(resources);
   const { models, faux } = testModels({ responses: Array.from({ length: 100 }, () => respond) });
   const storage = options.storage ?? new MemoryStorage();
   const harness = await Harness.open(storage, { registry, models, env: ({ cwd }) => new NodeExecutionEnv({ cwd: cwd ?? directory }),
@@ -57,7 +54,7 @@ const probe = (name: string, action = () => {}) => defineTool({ name, descriptio
 } });
 const injected = (text: string) => hook(GenerationTask, { beforeRequest: ({ messages }) => ({ messages: [...messages, { role: "user" as const, content: text, timestamp: 0 }] }) });
 
-test("source-loaded workers get only individually assigned extensions/hooks/wraps and full skills, never the shared catalog or parent history", { timeout: 15000 }, async () => {
+test("built-in workers get only individually assigned extensions/hooks/wraps and full skills, never the shared catalog or parent history", { timeout: 15000 }, async () => {
   const requests = new Map<string, string[]>(); let uiCalls = 0;
   const f = await fixture((transcript) => {
     const name = workerName(transcript), results = toolResults(transcript);
@@ -70,7 +67,7 @@ test("source-loaded workers get only individually assigned extensions/hooks/wrap
     assert(results.every((result) => !result.isError), JSON.stringify(results));
     if (name === "review") assert.match(JSON.stringify(results), /REVIEW-WRAPPER-MARKER/);
     return fauxAssistantMessage(`REPORT-${name}`);
-  }, { loader: true });
+  });
   f.registry.install(defineExtension({ name: "review-ext", tools: [probe("review_probe")], sections: [section("review_rules", () => "REVIEW-SECTION-MARKER")], hooks: [injected("REVIEW-HOOK-MARKER")],
     wraps: [wrapTool(createReadTool(), (original) => ({ ...original, async execute(args, api, ctx) {
       const result = await original.execute(args, api, ctx); return { ...result, output: [...(result.output ?? []), { type: "text" as const, text: "REVIEW-WRAPPER-MARKER" }] };
@@ -240,14 +237,14 @@ test("host recovery pauses for missing assigned extension code and restoring it 
     if (workerName(transcript)) { reached = true; await gate(hold.promise, options?.signal); return fauxAssistantMessage("Late original worker."); }
     return toolResults(transcript).length ? fauxAssistantMessage("Started.") : call("delegate", { tasks: [task("A", [], ["required-assigned"])] });
   }) });
-  const registry = await codingRegistry(new Resources(join(directory, "config"), [], directory)); registry.install(createSubagentsExtension());
+  const registry = await codingRegistry(new Resources(join(directory, "config"), [], directory));
   const required = defineExtension({ name: "required-assigned", tools: [probe("required_probe")] }); registry.install(required);
   const env = ({ cwd }: { cwd?: string }) => new NodeExecutionEnv({ cwd: cwd ?? directory });
   let chat = await openPersistentChat(path, first.models, { defaults: { model }, cwd: directory, registry, env, onLockLost: lockLost });
   try {
     const submitted = await chat.conversation.submit({ type: "input", content: "Start assigned work." }, context); assert.equal((await submitted.wait(context)).status, "done"); await until(() => reached);
     const jobId = (await chat.harness.snapshot(Jobs, chat.conversation.id, context))!.recent[0]; await chat.close();
-    const without = await codingRegistry(new Resources(join(directory, "config"), [], directory)); without.install(createSubagentsExtension());
+    const without = await codingRegistry(new Resources(join(directory, "config"), [], directory));
     const second = testModels({ responses: [fauxAssistantMessage("Recovered with assigned code.")] });
     chat = await openPersistentChat(path, second.models, { registry: without, env, onLockLost: lockLost });
     await assert.rejects(requireRecoveryReady(chat), /required-assigned/); assert.equal(second.faux.state.callCount, 0); assert.equal((await chat.harness.inspect(context)).scheduling, "paused"); await chat.close();

@@ -29,7 +29,7 @@ Usage: pi-d [options]
   --resume               Choose a saved session for the launch workspace
   --cwd path             Change the saved workspace while idle (default: launch directory)
   --extension path       Add a trusted Durable Extension (repeatable; full account access)
-  --no-extensions        Disable automatic extension discovery; explicit files still load
+  --no-extensions        Skip external extension discovery; built-ins remain available
   --skill path           Add a skill file/directory (repeatable)
   --list-models          List the pinned chat catalog without authentication
   --no-animation         Disable activity animation
@@ -40,15 +40,18 @@ No selector keeps the existing shared default.sqlite; it is never silently migra
 Sessions: $XDG_DATA_HOME/pi-d or ~/.local/share/pi-d; managed sessions live under sessions/.
 OpenAI uses ChatGPT subscription login only, never OPENAI_API_KEY.
 Credentials: $XDG_CONFIG_HOME/pi-d/auth.json or ~/.config/pi-d/auth.json (plaintext, 0600).
+Subagents: built in; no extension installation or activation required.
 Extensions: auto-loaded from the config directory's extensions/; no project code discovery.
 Other providers use environment keys (e.g. ANTHROPIC_API_KEY). Pi credentials are not read.
 In-app: /new /clear /session-new [name] /resume /status /login /logout /model /reasoning
-        /skills /skill:name /extensions /notifications /steer text /followup text /interrupt /queue /withdraw [id] /help
+        /skills /skill:name /extensions /notifications /agents /agent-show /agent-stop
+        /steer text /followup text /interrupt /queue /withdraw [id] /help
 /new and /clear reset active context without deleting stored history or the draft.
 Enter sends when idle · Tab completes commands/skills · Alt+Enter newline · Escape stops · Ctrl+C quits.
 Use /steer or /followup while busy; /interrupt stops foreground work and withdraws queued inputs.
 The footer's ctx ~ estimate is active context usage, not cumulative spend or subscription quota.
-Tools: read, bash, edit, write. No sandbox or per-call approval; workspace is not a boundary.
+Tools: read, bash, edit, write, delegate, agent_results, agent_stop, agent_message.
+No sandbox or per-call approval; workspace is not a boundary. Subagents start only when delegated.
 Opening a saved session resumes unfinished native work and may repeat a model call.
 Missing recovery extensions/blocked tasks keep automatic recovery paused; use /status.
 `;

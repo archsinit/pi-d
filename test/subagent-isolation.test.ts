@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 import test from "node:test";
 
 const helper = fileURLToPath(new URL("../bin/pi-d-subagents.mjs", import.meta.url));
-type Plan = { experiment: string; session: string; workspace: string; extension: string; executable: string; args: string[]; environment: Record<string, string> };
+type Plan = { experiment: string; session: string; workspace: string; executable: string; args: string[]; environment: Record<string, string> };
 
 test("isolated helper uses only private experiment paths and an explicit credential-free child environment", { skip: process.platform === "win32" }, async () => {
   const directory = await realpath(await mkdtemp(join(tmpdir(), "pi-d isolation 你好-")));
@@ -26,8 +26,8 @@ test("isolated helper uses only private experiment paths and an explicit credent
     assert(plan); assert(plan.experiment.startsWith(directory + "/pi-d-subagents-"));
     assert.equal(plan.executable, process.execPath); assert.equal(plan.session, join(plan.environment.XDG_DATA_HOME, "pi-d", "experiment.sqlite"));
     assert.equal(plan.environment.HOME, join(plan.experiment, "home")); assert.equal(plan.workspace, join(plan.experiment, "workspace"));
-    assert.equal(plan.extension, fileURLToPath(new URL("../src/subagents/index.ts", import.meta.url)));
-    assert.deepEqual(plan.args, ["--disable-warning=ExperimentalWarning", join(dirname(helper), "pi-d.mjs"), "--no-extensions", "--extension", plan.extension,
+    assert(!("extension" in plan));
+    assert.deepEqual(plan.args, ["--disable-warning=ExperimentalWarning", join(dirname(helper), "pi-d.mjs"), "--no-extensions",
       "--session", plan.session, "--cwd", plan.workspace, "--no-animation"]);
     assert(!result.stdout.includes("DUMMY-")); assert(!plan.environment.PATH.includes("/not-the-child-path"));
     assert.equal(plan.environment.NODE_OPTIONS, undefined); assert.equal(plan.environment.AWS_SHARED_CREDENTIALS_FILE, undefined);

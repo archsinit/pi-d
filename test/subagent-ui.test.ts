@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
+import { access, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -13,6 +13,8 @@ import { mountChat, type ChatHandle } from "../src/chat.ts";
 import { chatCommands } from "../src/commands.ts";
 import { commandCompletion } from "../src/completion.ts";
 import { codingRegistry } from "../src/coding.ts";
+import { extensionCommands } from "../src/extension-ui.ts";
+import { defineChatExtension } from "../src/extensions.ts";
 import { Resources } from "../src/resources.ts";
 import { createSubagentsExtension } from "../src/subagents/index.ts";
 import { Jobs } from "../src/subagents/state.ts";
@@ -22,37 +24,66 @@ import { gate, until, workerName } from "./subagent-fixtures.ts";
 import { TestTerminal } from "./terminal.ts";
 
 const context = BACKGROUND_CONTEXT;
-test("optional extension loads through the unchanged native loader and contributes nothing when omitted", async () => {
+test("normal coding startup includes built-in subagents without external discovery, configuration or starting work", async () => {
   const directory = await realpath(await mkdtemp(join(tmpdir(), "pi-d-agent-loader-")));
   const resources = new Resources(join(directory, "config"), [], directory);
   try {
-    const absent = await codingRegistry(resources);
-    assert(!absent.snapshot().extension("pi-d-subagents"));
-    const direct = await codingRegistry(resources, [fileURLToPath(new URL("../src/subagents/index.ts", import.meta.url))]);
-    assert(direct.snapshot().extension("pi-d-subagents"));
+    const loaded = await codingRegistry(resources, await resources.extensionPaths([], false));
+    assert(loaded.snapshot().extension("pi-d-subagents"));
+    await assert.rejects(access(resources.configDir), { code: "ENOENT" });
+    await assert.rejects(codingRegistry(resources, [fileURLToPath(new URL("../src/subagents/index.ts", import.meta.url))]), /Subagents are built in.*Remove the redundant/);
     const wrapper = join(directory, "configured-subagents.ts");
     await writeFile(wrapper, 'import { createSubagentsExtension } from "pi-d-chat/subagents"; export default createSubagentsExtension({ concurrency: 1 });\n');
-    const loaded = await codingRegistry(resources, [wrapper]);
-    assert(loaded.snapshot().extension("pi-d-subagents"));
-    const { models, faux } = testModels({ responses: Array.from({ length: 5 }, () => (transcript) => workerName(transcript) ? fauxAssistantMessage("SOURCE-LOADER-REPORT")
-      : transcript.messages.filter((message) => message.role !== "system").at(-1)?.role === "toolResult" ? fauxAssistantMessage("Source loader verified.")
-        : fauxAssistantMessage(fauxToolCall("delegate", { tasks: [{ name: "Loaded worker", task: "Report from the loaded extension." }] }), { stopReason: "toolUse" })) });
+    await assert.rejects(codingRegistry(resources, [wrapper]), /Subagents are built in.*Remove the redundant/);
+    const { models, faux } = testModels({ responses: Array.from({ length: 5 }, () => (transcript) => workerName(transcript) ? fauxAssistantMessage("BUILT-IN-WORKER-REPORT")
+      : transcript.messages.filter((message) => message.role !== "system").at(-1)?.role === "toolResult" ? fauxAssistantMessage("Built-in delegation verified.")
+        : fauxAssistantMessage(fauxToolCall("delegate", { tasks: [{ name: "Loaded worker", task: "Report from the built-in worker." }] }), { stopReason: "toolUse" })) });
     const harness = await Harness.open(new MemoryStorage(), { models, registry: loaded, env: ({ cwd }) => new NodeExecutionEnv({ cwd: cwd ?? directory }) }, context);
     try {
       const root = await harness.root(context, { agent: { model, cwd: directory } });
       assert.equal((await harness.inspect(context)).scheduling, "paused");
       assert.equal(await harness.snapshot(Jobs, root.id, context), undefined); assert.equal(faux.state.callCount, 0);
+      assert.equal((await harness.inspect(context)).tasks.length, 0);
+      assert.equal((await root.context(context)).entries.length, 0);
       const names = (await root.agent(context)).tools.map((tool) => tool.name);
-      assert(names.includes("delegate")); assert(!names.includes("agent_read"));
-      const input = await root.submit({ type: "input", content: "Exercise the loaded source extension." }, context); assert.equal((await input.wait(context)).status, "done");
+      for (const name of ["delegate", "agent_results", "agent_stop", "agent_message"]) assert(names.includes(name));
+      assert(!names.includes("agent_read"));
+      const controls = await extensionCommands({ harness, conversation: root }, new AbortController().signal);
+      for (const name of ["agents", "agent-show", "agent-stop"]) assert(controls.some((command) => command.name === name));
+      const input = await root.submit({ type: "input", content: "Exercise built-in delegation without extension setup." }, context); assert.equal((await input.wait(context)).status, "done");
       const jobId = (await harness.snapshot(Jobs, root.id, context))!.recent[0]; await harness.waitForTask(jobId, context);
-      const saved = await readJob(harness, root.id, jobId, context); assert.equal(resultView(saved.job, saved.workers).workers[0].report, "SOURCE-LOADER-REPORT");
+      const saved = await readJob(harness, root.id, jobId, context); assert.equal(resultView(saved.job, saved.workers).workers[0].report, "BUILT-IN-WORKER-REPORT");
       assert.equal(faux.state.callCount, 3);
       assert.equal((await harness.snapshot(Jobs, root.id, context))?.recent.length, 1);
       await root.configure({ extensions: { remove: [loaded.snapshot().extension("pi-d-subagents")!] } }, context);
       assert(!(await root.agent(context)).tools.some((tool) => tool.name === "delegate"));
     } finally { await harness.close(context); }
   } finally { await rm(directory, { recursive: true, force: true }); }
+});
+
+test("built-in controls and external commands remain reachable in paginated help without model requests", async () => {
+  const directory = await realpath(await mkdtemp(join(tmpdir(), "pi-d-agent-help-")));
+  const registry = await codingRegistry(new Resources(join(directory, "config"), [], directory));
+  registry.install(defineChatExtension({ name: "help-fixture", piD: { commands: [
+    { name: "late-local", description: "LATE-LOCAL-HELP", execute: () => {} },
+  ] } }));
+  const { models, faux } = testModels(), harness = await Harness.open(new MemoryStorage(), { models, registry }, context);
+  const root = await harness.root(context, { agent: { model, cwd: directory } });
+  const chat: ChatHandle = { harness, conversation: root, models, label: "built-in help", close: () => harness.close(context),
+    beforeModel: async () => { assert.fail("Local help must not require model preflight."); } };
+  chat.command = chatCommands(chat, models);
+  const terminal = new TestTerminal(110, 30), app = await mountChat(chat, terminal, false);
+  try {
+    app.ui.composer.editor.setText("/help"); terminal.send("\r"); await terminal.flush();
+    await until(() => app.ui.tui.hasOverlay());
+    terminal.send("\x1b[6~"); await terminal.flush();
+    await until(() => terminal.text().includes("LATE-LOCAL-HELP"));
+    assert.match(terminal.text(), /\/late-local/);
+    terminal.send("\x1b[5~"); await terminal.flush(); assert.match(terminal.text(), /Workspace:/);
+    terminal.send("\r"); await terminal.flush(); await until(() => !app.ui.busy);
+    assert.equal(faux.state.callCount, 0); assert.equal((await root.context(context)).entries.length, 0);
+    assert.equal((await harness.inspect(context)).tasks.length, 0); assert.equal(await harness.snapshot(Jobs, root.id, context), undefined);
+  } finally { await app.close(); terminal.dispose(); await rm(directory, { recursive: true, force: true }); }
 });
 
 test("local job inspection/completion/footer is read-only, works without preflight, and stopped workers leave siblings running", { timeout: 15000 }, async (t) => {
