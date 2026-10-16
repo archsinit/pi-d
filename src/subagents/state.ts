@@ -4,6 +4,8 @@ import type { ModelThinkingLevel } from "@earendil-works/pi-ai";
 export const EXTENSION = "pi-d-subagents";
 export const JOB_KIND = "pi-d.subagent-job";
 export const WORKER_KIND = "pi-d.subagent-worker";
+export const COMPLETION_KIND = "pi-d.subagent-completion";
+export const COMPLETION_ENTRY = "pi-d.subagent-completion";
 
 /** @deprecated Legacy wrapper options are accepted for compatibility but impose no limits. */
 export type SubagentPolicy = {
@@ -41,7 +43,7 @@ export const Jobs = defineDoc<{ recent: TaskId<JobResult>[]; active: TaskId<JobR
     return { recent: (value.recent ?? []) as TaskId<JobResult>[], active: typeof value.active === "number" ? [value.active as TaskId<JobResult>] : [] };
   },
 });
-export const Call = defineDoc<{ jobId?: TaskId<JobResult> }>({
+export const Call = defineDoc<{ jobId?: TaskId<JobResult>; completionTaskId?: TaskId }>({
   kind: "pi-d.subagent-call", version: 1, scope: "task", initial: () => ({}),
 });
 export type MessageReceipt = {

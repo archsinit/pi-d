@@ -11,7 +11,7 @@ import { createReadTool } from "@earendil-works/pi-durable/tools";
 import { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node";
 import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
 import { createSubagentsExtension } from "../src/subagents/index.ts";
-import { Call, EXTENSION, JOB_KIND, WORKER_KIND, Jobs, Worker, type JobCheckpoint, type JobInput, type JobResult, type WorkerInput, type WorkerResult } from "../src/subagents/state.ts";
+import { Call, COMPLETION_KIND, EXTENSION, JOB_KIND, WORKER_KIND, Jobs, Worker, type JobCheckpoint, type JobInput, type JobResult, type WorkerInput, type WorkerResult } from "../src/subagents/state.ts";
 import { readJob, resultView } from "../src/subagents/view.ts";
 import { gate, until, workerName, toolResults } from "./subagent-fixtures.ts";
 import { model, testModels } from "./models.ts";
@@ -111,6 +111,7 @@ for (const mode of ["complete", "model stop", "legacy foreground stop"] as const
     await harness.waitForTask(jobId, context); const saved = await readJob(harness, root.id, jobId, context), view = resultView(saved.job, saved.workers);
     assert.equal(view.status, mode === "complete" ? "completed" : "aborted"); assert.equal(saved.job.version, 3);
     assert.equal((await storage.scanTasks({ kind: JOB_KIND }, 10, undefined, context)).items.length, 1);
+    assert.equal((await storage.scanTasks({ kind: COMPLETION_KIND }, 10, undefined, context)).items.length, 0, "Legacy jobs never gain completion callbacks.");
     assert.equal((await storage.scanTasks({ kind: WORKER_KIND }, 10, undefined, context)).items.length, mode === "complete" ? 3 : 2);
     assert.deepEqual((await harness.snapshot(Jobs, root.id, context))?.active, []);
     if (mode === "complete") for (const result of view.workers) {

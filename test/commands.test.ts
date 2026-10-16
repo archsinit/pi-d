@@ -224,11 +224,12 @@ test("/login is available for paused unfinished native work and resumes it witho
     responses: [fauxAssistantMessage("Paused native answer. ".repeat(500)), fauxAssistantMessage("Recovered answer.")] });
   models.setProvider({ ...faux.provider, auth: models.getProvider("openai-codex")!.auth });
   await credentials.modify("openai-codex", async () => subscriptionCredential);
-  let chat = await openPersistentChat(file, models, { model: { provider: "openai-codex", modelId: "gpt-6.1-sol" }, defaultCwd: directory, onLockLost: lockLost });
+  let chat = await openPersistentChat(file, models, { model: { provider: "openai-codex", modelId: "gpt-6.1-sol" }, defaultCwd: directory, onLockLost: lockLost, gateModelWork: true });
   let app: Awaited<ReturnType<typeof mountChat>> | undefined;
   const terminal = new TestTerminal(100, 30);
   const requests = t.mock.method(globalThis, "fetch", async () => { throw new Error("No network is permitted."); });
   try {
+    chat.allowModel!();
     await chat.conversation.submit({ type: "input", content: "Keep this admitted input." }, context);
     for (let i = 0; i < 200; i++) {
       const live = await chat.harness.snapshot(LiveDoc, chat.conversation.id, context);
@@ -238,7 +239,7 @@ test("/login is available for paused unfinished native work and resumes it witho
     assert((await chat.harness.snapshot(LiveDoc, chat.conversation.id, context))?.run);
     await chat.close(); await models.logout("openai-codex");
     await assert.rejects(openPersistentChat(file, models, { cwd: join(directory, "other"), onLockLost: lockLost }), /Unfinished work/);
-    chat = await openPersistentChat(file, models, { onLockLost: lockLost });
+    chat = await openPersistentChat(file, models, { onLockLost: lockLost, gateModelWork: true });
     chat.beforeModel = () => requireSubscription(chat, models);
     chat.command = chatCommands(chat, models, new Resources(join(directory, "config"), [], directory));
     t.mock.method(models, "login", async (...[provider, type, interaction]: Parameters<typeof models.login>) => {
@@ -248,6 +249,8 @@ test("/login is available for paused unfinished native work and resumes it witho
     });
     app = await mountChat(chat, terminal, false); await terminal.flush();
     assert(app.ui.busy); assert.equal((await chat.harness.inspect(context)).scheduling, "paused"); assert.equal(faux.state.callCount, 1);
+    // Native control operations can resume scheduling without authorizing traffic. Login must still be available.
+    chat.harness.resume(); await delay(30); assert.equal((await chat.harness.inspect(context)).scheduling, "running"); assert.equal(faux.state.callCount, 1);
     terminal.send("/login"); assert.equal(app.ui.composer.editor.disableSubmit, false); terminal.send("\r");
     await until(() => terminal.text().includes("Fixture approval")); terminal.send("\r");
     await until(() => faux.state.callCount === 2); await chat.conversation.waitForIdle(context);
@@ -257,8 +260,9 @@ test("/login is available for paused unfinished native work and resumes it witho
   } finally { await app?.close(); await chat.close(); terminal.dispose(); await rm(directory, { recursive: true, force: true }); }
 });
 
-test("Escape cancels an in-flight auth preflight without admitting input or losing a newer draft", async () => {
+test("Escape cancels an in-flight auth preflight without admitting input or losing a newer draft", async (t) => {
   const { models, faux } = testModels(), fixture = await setup(models);
+  const authorize = t.mock.fn(); fixture.chat.allowModel = authorize;
   const reached = Promise.withResolvers<void>(), release = Promise.withResolvers<void>();
   fixture.chat.beforeModel = async () => { reached.resolve(); await release.promise; };
   try {
@@ -266,6 +270,7 @@ test("Escape cancels an in-flight auth preflight without admitting input or losi
     fixture.app.ui.composer.editor.setText("next draft");
     fixture.terminal.send("\x1b"); release.resolve(); await until(() => !fixture.app.ui.busy);
     assert.equal(fixture.app.ui.composer.editor.getExpandedText(), "pending input\n\nnext draft");
+    assert.equal(authorize.mock.callCount(), 0, "A cancelled preflight must not release background model work.");
     assert.equal(faux.state.callCount, 0);
     assert.equal((await fixture.chat.conversation.context(context)).entries.length, 0);
   } finally { release.resolve(); await fixture.app.close(); fixture.terminal.dispose(); }

@@ -16,7 +16,7 @@ Offline renderer capture with scripted output.
 - Keep separate project sessions with saved models, reasoning levels and workspaces.
 - Steer a running task or queue a follow-up through Durable.
 - Load AGENTS instructions, skills and trusted Durable extensions, including local commands, UI-only messages/toasts and footer status.
-- Delegate with [built-in subagents](docs/subagents.md): explicit per-worker skills/extensions, normal coding tools without worker-count/time/call budgets, non-nesting native tasks and nonblocking coordinator steering/cancellation. Available on normal startup without extension setup; workers start only when delegated. An isolated launch helper is also available.
+- Delegate with [built-in subagents](docs/subagents.md): explicit per-worker skills/extensions, normal coding tools without worker-count/time/call budgets, non-nesting native tasks, nonblocking coordinator steering/cancellation and automatic completion callbacks. Available on normal startup without extension setup; workers start only when delegated. An isolated launch helper is also available.
 
 ## Quick start
 

@@ -2,6 +2,7 @@ import type { Message } from "@earendil-works/pi-ai";
 import type { ConversationView, LiveState } from "@earendil-works/pi-durable";
 import { Markdown, stripTerminalSequences, Text, truncateToWidth, type Component } from "@earendil-works/pi-tui";
 import { ExtensionPresentation } from "./extension-presentation.ts";
+import { COMPLETION_ENTRY } from "./subagents/state.ts";
 import type { ExtensionMessageOptions } from "./extensions.ts";
 import { fill, markdownTheme, paint, safeText } from "./theme.ts";
 
@@ -78,7 +79,7 @@ export class Transcript implements Component {
       }
       for (const message of entry.model ?? []) {
         if (message.role === "system") continue;
-        this.appendMessage(rows, message, column, false);
+        this.appendMessage(rows, message, column, false, entry.kind === COMPLETION_ENTRY ? "◇ Subagent completion" : undefined);
       }
       appendExtensions(entry.id);
     }
@@ -143,11 +144,11 @@ export class Transcript implements Component {
     if (failed) rows.push(" ".repeat(bodyInset) + paint("! tool failed", "red"));
   }
 
-  private appendMessage(rows: string[], message: Message, width: number, live: boolean): void {
+  private appendMessage(rows: string[], message: Message, width: number, live: boolean, userLabel?: string): void {
     const blocks = this.blocks(message);
     if (message.role === "user") {
       if (!rows.length) rows.push(""); // Later messages reuse the previous message's spacer.
-      rows.push("", paint("❯ You", "cyan", true));
+      rows.push("", paint(userLabel ?? "❯ You", userLabel ? "gold" : "cyan", true));
       for (const block of blocks) rows.push(...block.body.render(width));
       rows.push("");
     } else if (message.role === "toolResult") {

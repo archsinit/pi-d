@@ -9,6 +9,7 @@ import { openNodeSqliteDatabase, type NodeSqliteDatabase } from "@earendil-works
 import lockfile from "proper-lockfile";
 import type { ChatHandle } from "./chat.ts";
 import { LoadedExtensions } from "./status.ts";
+import { modelReadinessGate } from "./model-readiness.ts";
 
 export const DEFAULT_CHAT_AGENT = {
   model: { provider: "openai-codex", modelId: "gpt-6.1-sol" }, thinkingLevel: "max",
@@ -67,6 +68,7 @@ export async function openPersistentChat(
     defaults?: { model: ModelRef; thinkingLevel?: ModelThinkingLevel };
     registry?: Registry; env?: HarnessOptions["env"]; cwd?: string; defaultCwd?: string;
     onReport?: (error: unknown) => void; onLockLost: (error: Error) => never;
+    gateModelWork?: boolean;
   },
 ): Promise<ChatHandle> {
   const context = BACKGROUND_CONTEXT;
@@ -89,15 +91,17 @@ export async function openPersistentChat(
   const path = await realpath(requested);
   const release = await lockSession(path, options.onLockLost);
   let database: NodeSqliteDatabase | undefined;
-  let harness: Harness | undefined;
+  let harness: Harness | undefined, readiness: ReturnType<typeof modelReadinessGate> | undefined;
   try {
     database = await openNodeSqliteDatabase(path);
     await database.exec("PRAGMA synchronous = FULL");
     const storage = await SqliteStorage.open(database);
+    readiness = options.gateModelWork ? modelReadinessGate(models) : undefined;
     harness = await Harness.open(storage, {
-      models, registry: options.registry ?? createRegistry(), env: options.env, onReport: options.onReport,
+      models: readiness?.models ?? models, registry: options.registry ?? createRegistry(), env: options.env, onReport: options.onReport,
       settings: { progress: { partialIntervalMs: 200 } },
     }, context);
+    readiness?.attach(harness);
     const conversation = await harness.root(context, initialModel ? {
       agent: { model: initialModel, thinkingLevel: initialThinking, cwd: options.cwd ?? options.defaultCwd },
       init: () => validate(initialModel, initialThinking),
@@ -126,14 +130,14 @@ export async function openPersistentChat(
     const owner = harness;
     let closed: Promise<void> | undefined;
     return {
-      harness, conversation, models, file: path, extensionNames, label: basename(path),
-      close: () => closed ??= owner.close(context).finally(release),
+      harness, conversation, models, file: path, extensionNames, label: basename(path), allowModel: readiness?.allow,
+      close: () => closed ??= owner.close(context).finally(() => { readiness?.close(); return release(); }),
     };
   } catch (error) {
     try {
       if (harness) await harness.close(context);
       else await database?.close();
-    } finally { await release(); }
+    } finally { readiness?.close(); await release(); }
     throw error;
   }
 }

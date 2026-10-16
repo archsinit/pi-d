@@ -1,10 +1,11 @@
 import { Type, type Message } from "@earendil-works/pi-ai";
-import { defineTool, hook, section, ToolTask, wrapSection, type TaskId, type ToolExecutionResult } from "@earendil-works/pi-durable";
+import { defineTool, hook, section, ToolTask, wrapSection, type JsonObject, type TaskId, type ToolExecutionResult } from "@earendil-works/pi-durable";
 import { defineChatExtension, type ChatExtension, type ChatCommandContext, type ChatExtensionContext } from "../extensions.ts";
 import { workerTools, legacyTools } from "./tools.ts";
 import { assignments, orchestrationTools } from "./profile.ts";
 import { Call, Control, EXTENSION, JOB_KIND, Jobs, Worker, report, bounded, type JobResult, type SubagentPolicy } from "./state.ts";
 import { SubagentJob, SubagentWorker } from "./tasks.ts";
+import { SubagentCompletion } from "./completion.ts";
 import { messageTool } from "./messaging.ts";
 import { id, readJob, resultView } from "./view.ts";
 export { DEFAULT_POLICY, type SubagentPolicy } from "./state.ts";
@@ -69,29 +70,34 @@ async function show(argument: string, api: ChatCommandContext) {
 export function createSubagentsExtension(_legacyOptions: Partial<SubagentPolicy> = {}): ChatExtension {
   const delegate = defineTool({
     name: "delegate", callers: ["model"], replay: "safe", executionMode: "sequential",
-    description: "Start self-contained subagent assignments using normal pi-d coding tools, this model and workspace. Explicitly assign each task's skills and extensions by exact parent-available names; omitted/empty lists mean none, not automatic inheritance. Selected skill instructions are loaded for that worker. No worker-count, concurrency, time or tool-call budgets. Workers cannot delegate. Always returns promptly with a background job ID so you can continue, inspect with agent_results, send steering/follow-up input with agent_message, or interrupt/cancel with agent_stop. No automatic report is injected; do not busy-poll.",
+    description: "Start self-contained subagent assignments using normal pi-d coding tools, this model and workspace. Explicitly assign each task's skills and extensions by exact parent-available names; omitted/empty lists mean none, not automatic inheritance. Selected skill instructions are loaded for that worker. No worker-count, concurrency, time or tool-call budgets. Workers cannot delegate. Always returns promptly with a background job ID so you can continue, inspect with agent_results, send steering/follow-up input with agent_message, or interrupt/cancel with agent_stop. By default a settled job automatically queues a completion event so you can retrieve and report results without polling; notify:false requests silence. Reports themselves are not automatically injected.",
     parameters: Type.Object({ tasks: Type.Array(Type.Object({ name: Type.String({ minLength: 1 }), task: Type.String({ minLength: 1 }),
       role: Type.Optional(Type.String({ minLength: 1 })),
       skills: Type.Optional(Type.Array(Type.String({ minLength: 1 }), { uniqueItems: true, description: "Exact skill names from the orchestrator's catalog; only these instructions are loaded. Omitted means none." })),
       extensions: Type.Optional(Type.Array(Type.String({ minLength: 1 }), { uniqueItems: true, description: "Exact enabled parent extension names, not files or module paths. Omitted means no additional extensions." })),
-    }), { minItems: 1 }), context: Type.Optional(Type.String()) }),
-    structuredOutputSchema: Type.Union([Type.Object({ jobId: nativeId(), background: Type.Literal(true) }), resultSchema]),
+    }), { minItems: 1 }), context: Type.Optional(Type.String()),
+      notify: Type.Optional(Type.Boolean({ description: "Default true: wake the coordinator once this job settles, using a native follow-up if busy. Set false only for a deliberately silent job." })) }),
+    structuredOutputSchema: Type.Union([Type.Object({ jobId: nativeId(), background: Type.Literal(true), completionTaskId: Type.Optional(nativeId()) }), resultSchema]),
     async execute(args, api, context): Promise<ToolExecutionResult> {
       if ((await api.snapshot(Worker, api.conversationId, context))?.owner) throw new Error("Workers cannot delegate.");
-      let jobId = (await api.snapshot(Call, api.taskId, context))?.jobId;
+      let { jobId, completionTaskId } = (await api.snapshot(Call, api.taskId, context)) ?? {};
       if (jobId === undefined) {
         const agent = await api.agent(context);
         if (!agent.model || !api.env?.cwd) throw new Error("Delegation requires a selected model and workspace environment.");
         const tasks = await assignments(args.tasks, agent, api.env.cwd, context);
         const input = { tasks, context: args.context?.trim() ?? "",
           profile: { model: agent.model, thinkingLevel: agent.thinkingLevel, cwd: api.env.cwd, instructions: agent.instructions ?? "" } };
-        jobId = await api.commit(async (tx) => {
+        ({ jobId, completionTaskId } = await api.commit(async (tx) => {
           const call = await tx.doc(Call, api.taskId);
-          if (call.jobId !== undefined) return call.jobId;
+          if (call.jobId !== undefined) return { jobId: call.jobId, completionTaskId: call.completionTaskId };
           const jobs = await tx.doc(Jobs, api.conversationId);
-          const created = await tx.createTask(SubagentJob, input, { conversationId: api.conversationId, ownership: { kind: "conversation" }, background: true });
-          call.jobId = created; jobs.active.push(created); jobs.recent = [...jobs.recent.slice(-29), created]; return created;
-        }, context);
+          const options = { conversationId: api.conversationId, ownership: { kind: "conversation" as const }, background: true };
+          const created = await tx.createTask(SubagentJob, input, options);
+          // Atomic admission: no admitted job can lose its callback across a crash; no worker or old job acquires one.
+          if (args.notify !== false) call.completionTaskId = await tx.createTask(SubagentCompletion, { jobId: created }, options);
+          call.jobId = created; jobs.active.push(created); jobs.recent = [...jobs.recent.slice(-29), created];
+          return { jobId: created, completionTaskId: call.completionTaskId };
+        }, context));
       }
       await api.details({ jobId }, context);
       const saved = await api.getTask(jobId, context);
@@ -103,8 +109,9 @@ export function createSubagentsExtension(_legacyOptions: Partial<SubagentPolicy>
           isError: result.status === "failed" || result.status === "aborted", details: { jobId } };
       }
       // Admission acknowledgement only: do not queue per-worker reads or copy large reports into this tool.
-      return { output: [{ type: "text", text: `Subagent job ${jobId} admitted in the background. This acknowledges admission, not completion. You retain control: agent_results reads snapshots/reports; agent_message queues steering/follow-up input; agent_stop interrupts/cancels a worker or job. Continue other work or yield rather than busy-poll. No report is automatically injected.` }],
-        structuredOutput: { jobId, background: true }, details: { jobId } };
+      const callback: JsonObject = completionTaskId === undefined ? {} : { completionTaskId };
+      return { output: [{ type: "text", text: `Subagent job ${jobId} admitted in the background. This acknowledges admission, not completion. You retain control: agent_results reads snapshots/reports; agent_message queues steering/follow-up input; agent_stop interrupts/cancels a worker or job. Continue other work or yield rather than busy-poll. ${completionTaskId === undefined ? "This job is silent: no automatic completion event." : "When the job settles, a completion event will wake you (or queue after your current turn); retrieve the saved reports with agent_results and update the user."} Reports themselves are not automatically injected.` }],
+        structuredOutput: { jobId, background: true, ...callback }, details: { jobId, ...callback } };
     },
   });
   const results = defineTool({
@@ -153,7 +160,7 @@ export function createSubagentsExtension(_legacyOptions: Partial<SubagentPolicy>
         : "No matching active subagent work remains." }] };
     },
   });
-  return defineChatExtension({ name: EXTENSION, tools: [...workerTools, delegate, results, stop, messageTool, ...legacyTools], tasks: [SubagentJob, SubagentWorker],
+  return defineChatExtension({ name: EXTENSION, tools: [...workerTools, delegate, results, stop, messageTool, ...legacyTools], tasks: [SubagentJob, SubagentWorker, SubagentCompletion],
     hooks: [hook(ToolTask, { async beforeTool(call, api, context) {
       const worker = await api.snapshot(Worker, api.conversationId, context);
       if (!worker?.owner) return;
@@ -176,7 +183,7 @@ export function createSubagentsExtension(_legacyOptions: Partial<SubagentPolicy>
       const worker = await input.read.snapshot(Worker, input.conversationId, context);
       if (!worker?.owner) return "You are the sole subagent orchestrator. delegate starts any number of parallel workers with no extension-imposed time/tool-call budgets, always in the background so you retain control. Workers cannot delegate. Supply self-contained tasks, applicable instructions and constraints; avoid conflicting concurrent edits. Explicitly assign skills and extensions per task; omitted/empty lists mean none. Use exact skill names from available_skills or explicit instructions. Eligible extension names in this conversation: "
         + JSON.stringify(input.agent.extensions.map((extension) => extension.name))
-        + ". agent_results reads nonblocking snapshots or lists jobs; agent_message queues steering (default) or followUp input for an active 1-based worker, acknowledging admission only, never consumption. It cannot restart stopped/settled workers. agent_stop can interrupt/cancel any worker, batch, or all active batches. Do not busy-poll or claim completion before results exist. No automatic report input is injected. Closing pauses execution; reopening with trusted code recovers native work.";
+        + ". agent_results reads nonblocking snapshots or lists jobs; agent_message queues steering (default) or followUp input for an active 1-based worker, acknowledging admission only, never consumption. It cannot restart stopped/settled workers. agent_stop can interrupt/cancel any worker, batch, or all active batches. Do not busy-poll or claim completion before results exist. By default, each settled job queues one automatic completion event as a native follow-up: yield if there is nothing else to do, then use agent_results on the event's job ID and update the user after checking the reports. Do not repeat assignments or automatically delegate more work in response to an event. Reports are not automatically injected; notify:false deliberately silences a job. Closing pauses execution; reopening with trusted code and provider/recovery readiness recovers native work and pending completion events.";
       const capabilities = worker.capabilities;
       const missing = capabilities?.extensions.filter((name) => !input.agent.extensions.some((extension) => extension.name === name)) ?? [];
       if (missing.length) throw new Error(`Assigned extensions are unavailable: ${missing.map((name) => JSON.stringify(name)).join(", ")}.`);

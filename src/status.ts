@@ -3,6 +3,7 @@ import { defineDoc, LiveDoc, type HarnessInspection } from "@earendil-works/pi-d
 import type { Models } from "@earendil-works/pi-ai/models";
 import { estimateContextTokens } from "@earendil-works/pi-ai/utils/estimate";
 import type { ChatHandle } from "./chat.ts";
+import { modelReadinessPending } from "./model-readiness.ts";
 
 // Inert names only, in the authoritative store. Never an executable startup configuration.
 export const LoadedExtensions = defineDoc<{ names: string[] }>({
@@ -48,7 +49,7 @@ export async function sessionStatus(chat: ChatHandle, models: Models): Promise<s
     `Active context: ~${tokens} tokens${limit ? ` / ${limit} (${Math.round(tokens / limit * 100)}%)` : " (model limit unavailable)"}; not subscription quota`,
     `Authentication: ${auth?.type ?? "not connected"} (local status only)`,
     "Paused authentication requires /login or the provider's environment credentials; inspecting status never connects or resumes work.",
-    `Scheduling: ${inspection.scheduling}`,
+    `Scheduling: ${inspection.scheduling}${await modelReadinessPending(chat.harness) ? " · model requests await host authentication/recovery readiness" : ""}`,
     `Selected extensions: ${agent.extensions.map((extension) => extension.name).join(", ") || "none"}`,
     `Missing recovery extensions: ${missing.join(", ") || "none"}`,
     `Blocked tasks: ${blocked.length}`,

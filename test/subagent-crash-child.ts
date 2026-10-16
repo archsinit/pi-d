@@ -8,12 +8,12 @@ import { createSubagentsExtension } from "../src/subagents/index.ts";
 import { model, testModels } from "./models.ts";
 import { gate, workerName } from "./subagent-fixtures.ts";
 
-const [file, cwd] = process.argv.slice(2);
+const [file, cwd, completion] = process.argv.slice(2);
 const reached = Promise.withResolvers<void>();
 const { models } = testModels({ responses: Array.from({ length: 20 }, () => async (transcript, options) => {
   if (workerName(transcript)) { reached.resolve(); await gate(new Promise<void>(() => {}), options?.signal); return fauxAssistantMessage("Unreachable."); }
   return transcript.messages.at(-1)?.role === "toolResult" ? fauxAssistantMessage("Background acknowledged.")
-    : fauxAssistantMessage(fauxToolCall("delegate", { tasks: [{ name: "Crash probe", task: "Continue after process death." }], background: true }), { stopReason: "toolUse" });
+    : fauxAssistantMessage(fauxToolCall("delegate", { notify: completion === "completion", tasks: [{ name: "Crash probe", task: "Continue after process death." }], background: true }), { stopReason: "toolUse" });
 }) });
 const registry = createRegistry(); registry.install(createSubagentsExtension());
 const harness = await Harness.open(await openNodeSqliteStorage(file), { models, registry, env: () => new NodeExecutionEnv({ cwd }) }, context);

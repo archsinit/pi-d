@@ -18,7 +18,8 @@ import { readJob, resultView } from "../src/subagents/view.ts";
 import { gate, until, userText, workerName, toolResults } from "./subagent-fixtures.ts";
 import { model, testModels } from "./models.ts";
 
-const call = (name: string, args: { [key: string]: JsonValue }) => fauxAssistantMessage(fauxToolCall(name, args), { stopReason: "toolUse" });
+// Messaging tests use silent jobs; callback admission and coordinator wake-up are covered separately.
+const call = (name: string, args: { [key: string]: JsonValue }) => fauxAssistantMessage(fauxToolCall(name, name === "delegate" ? { ...args, notify: false } : args), { stopReason: "toolUse" });
 const results = (view: { messages: readonly TranscriptContext["messages"][number][] }) => view.messages.filter((message) => message.role === "toolResult");
 const afterTool = (transcript: TranscriptContext) => transcript.messages.filter((message) => message.role !== "system").at(-1)?.role === "toolResult";
 const tasks = (names = ["A"], assigned = false) => names.map((name) => ({ name, task: `Complete ${name}.`, ...(assigned ? { extensions: ["message-fixture"] } : {}) }));
@@ -83,7 +84,7 @@ test("native worker inbox admits promptly while a tool is busy; steering/follow-
     assert.match(requests[3], /FOLLOW-TWO/);
     const saved = await readJob(f.harness, f.root.id, jobId, context), view = resultView(saved.job, saved.workers);
     assert.equal(view.status, "completed"); assert.equal(view.workers[0].report, "LATEST-REPORT");
-    assert.equal((await f.root.context(context)).messages.length, before, "Completion must not inject parent input.");
+    assert.equal((await f.root.context(context)).messages.length, before, "A deliberately silent job must not inject parent input.");
     assert.equal(await f.harness.snapshot(Messages, saved.workers[0].id, context), undefined, "Native task-scoped references retire at settlement.");
     for (const item of sent) {
       const native = await (await f.harness.submission(item.submissionId, context))!.status(context);

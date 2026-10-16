@@ -14,6 +14,7 @@ import { Resources, xml } from "./resources.ts";
 import { parseModel, parseThinking } from "./session.ts";
 import { pickSession } from "./sessions.ts";
 import { requireRecoveryReady, sessionStatus } from "./status.ts";
+import { modelReadinessPending } from "./model-readiness.ts";
 import type { ChatUI } from "./ui.ts";
 
 const help = (extra: SlashCommand[]) => [...commands, ...extra].map((command) => `/${command.name}${command.argumentHint ? ` ${command.argumentHint}` : ""} · ${command.description}`).join("\n")
@@ -154,14 +155,14 @@ export function chatCommands(chat: ChatHandle, models: Models, resources?: Resou
     if (command === "login" || command === "logout") {
       if (!resources) throw new Error("Authentication is disabled in the offline demo.");
       if (argument) throw new Error(`Use /${command} without arguments.`);
-      if (command === "logout" || (await chat.harness.inspect(context)).scheduling !== "paused") await idle(chat);
+      if (command === "logout" || ((await chat.harness.inspect(context)).scheduling !== "paused" && !await modelReadinessPending(chat.harness))) await idle(chat);
       if (command === "login") {
         await login(models, ui, signal);
         signal.throwIfAborted();
         await requireSubscription(chat, models);
         await requireRecoveryReady(chat);
         signal.throwIfAborted();
-        chat.harness.resume(); ui.setNotice("ChatGPT connected.");
+        chat.allowModel?.(); chat.harness.resume(); ui.setNotice("ChatGPT connected.");
       } else {
         for (const provider of ["openai", "openai-codex"]) await models.logout(provider);
         ui.setNotice("Local ChatGPT credentials removed. Server grants are not revoked.");

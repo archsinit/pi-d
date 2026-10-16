@@ -25,7 +25,8 @@ import { gate, until, workerName, toolResults } from "./subagent-fixtures.ts";
 import { lockLost, model, testModels } from "./models.ts";
 import { TestTerminal } from "./terminal.ts";
 
-const call = (name: string, args: { [key: string]: JsonValue } = {}) => fauxAssistantMessage(fauxToolCall(name, args), { stopReason: "toolUse" });
+// Keep capability tests independent of the extra completion model turn (covered separately).
+const call = (name: string, args: { [key: string]: JsonValue } = {}) => fauxAssistantMessage(fauxToolCall(name, name === "delegate" ? { ...args, notify: false } : args), { stopReason: "toolUse" });
 const task = (name: string, skills?: string[], extensions?: string[]) => ({ name, task: `Complete ${name} and cite evidence.`, ...(skills ? { skills } : {}), ...(extensions ? { extensions } : {}) });
 async function skill(directory: string, name: string, body: string, manual = false) {
   const path = join(directory, "config", "skills", name, "SKILL.md");

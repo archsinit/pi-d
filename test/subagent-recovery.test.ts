@@ -54,7 +54,7 @@ for (const cut of cutpoints) {
     const respond: FauxResponseFactory = (transcript) => workerName(transcript) ? cut === "read admission" && !toolResults(transcript).length
       ? fauxAssistantMessage(fauxToolCall("read", { path: "README.md" }), { stopReason: "toolUse" }) : fauxAssistantMessage("SAVED-WORKER-REPORT")
       : transcript.messages.filter((message) => message.role !== "system").at(-1)?.role === "toolResult" ? fauxAssistantMessage("Recovered coordinator answer.")
-        : fauxAssistantMessage(fauxToolCall("delegate", { tasks: [{ name: "A", task: "Investigate the fixture." }] }), { stopReason: "toolUse" });
+        : fauxAssistantMessage(fauxToolCall("delegate", { notify: false, tasks: [{ name: "A", task: "Investigate the fixture." }] }), { stopReason: "toolUse" });
     const first = testModels({ responses: Array.from({ length: 30 }, () => respond) });
     const maxToolCalls = cut === "read admission" ? 1 : 7;
     const registry = createRegistry(); registry.install(createSubagentsExtension({ concurrency: 1, maxToolCalls }));
@@ -108,7 +108,7 @@ test("a never-submitted worker still runs after arbitrarily long downtime", { ti
     const value = Reflect.get(target, key, target); return typeof value === "function" ? value.bind(target) : value;
   } });
   const registry = createRegistry(); registry.install(createSubagentsExtension({ timeoutMs: 100 }));
-  const first = testModels({ responses: [fauxAssistantMessage(fauxToolCall("delegate", { tasks: [{ name: "Persisted", task: "Resume after downtime." }] }), { stopReason: "toolUse" }), fauxAssistantMessage("Background acknowledged.")] });
+  const first = testModels({ responses: [fauxAssistantMessage(fauxToolCall("delegate", { notify: false, tasks: [{ name: "Persisted", task: "Resume after downtime." }] }), { stopReason: "toolUse" }), fauxAssistantMessage("Background acknowledged.")] });
   const options = { models: first.models, registry, env: ({ cwd }: { cwd?: string }) => new NodeExecutionEnv({ cwd: cwd ?? directory }), now: () => 100,
     settings: { compaction: { enabled: false }, retry: { enabled: false } }, onReport: () => {} };
   let harness = await Harness.open(wrapped, options, context);
@@ -135,7 +135,7 @@ test("missing definitions pause recovery; built-in startup resumes an existing o
   const first = testModels({ responses: Array.from({ length: 20 }, () => async (transcript, options) => {
     if (workerName(transcript)) { reached.resolve(); await gate(stop.promise, options?.signal); return fauxAssistantMessage("Initial worker."); }
     return transcript.messages.at(-1)?.role === "toolResult" ? fauxAssistantMessage("Background acknowledged.")
-      : fauxAssistantMessage(fauxToolCall("delegate", { tasks: [{ name: "Persisted", task: "Resume me." }], background: true }), { stopReason: "toolUse" });
+      : fauxAssistantMessage(fauxToolCall("delegate", { notify: false, tasks: [{ name: "Persisted", task: "Resume me." }], background: true }), { stopReason: "toolUse" });
   }) });
   const registry = createRegistry(); registry.install(createSubagentsExtension());
   const env = ({ cwd }: { cwd?: string }) => new NodeExecutionEnv({ cwd: cwd ?? directory });
@@ -181,7 +181,7 @@ test("a model cancellation survives a lost commit acknowledgement and restart", 
     if (workerName(transcript)) { reached = true; await gate(hold.promise, options?.signal); return fauxAssistantMessage("Late."); }
     if (transcript.messages.filter((message) => message.role !== "system").at(-1)?.role === "toolResult") return fauxAssistantMessage("Acknowledged.");
     return fauxAssistantMessage(fauxToolCall(JSON.stringify(transcript.messages).includes("STOP-REQUEST") ? "agent_stop" : "delegate",
-      JSON.stringify(transcript.messages).includes("STOP-REQUEST") ? {} : { tasks: [{ name: "A", task: "Wait for cancellation." }] }), { stopReason: "toolUse" });
+      JSON.stringify(transcript.messages).includes("STOP-REQUEST") ? {} : { notify: false, tasks: [{ name: "A", task: "Wait for cancellation." }] }), { stopReason: "toolUse" });
   }) });
   const registry = createRegistry(); registry.install(createSubagentsExtension());
   const options = { registry, models: first.models, env: ({ cwd }: { cwd?: string }) => new NodeExecutionEnv({ cwd: cwd ?? directory }), onReport: () => {} };

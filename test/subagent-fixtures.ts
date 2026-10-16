@@ -7,7 +7,13 @@ export function userText(transcript: TranscriptContext): string {
     : message.content.flatMap((part) => part.type === "text" ? [part.text] : []).join("\n")).join("\n");
 }
 export function workerName(transcript: TranscriptContext): string | undefined { return userText(transcript).match(/^Assignment: ([^\n]+)/m)?.[1]; }
-export const toolResults = (transcript: TranscriptContext) => transcript.messages.filter((message) => message.role === "toolResult");
+export const toolResults = (transcript: { messages: readonly TranscriptContext["messages"][number][] }) => transcript.messages.filter((message) => message.role === "toolResult");
+export function completionJob(transcript: TranscriptContext): number | undefined {
+  const message = transcript.messages.findLast((message) => message.role === "user");
+  const text = !message ? "" : typeof message.content === "string" ? message.content : message.content.flatMap((part) => part.type === "text" ? [part.text] : []).join("\n");
+  const match = text.match(/^\[Subagent completion\]\nJob ID: (\d+)\n/);
+  return match ? Number(match[1]) : undefined;
+}
 export async function until(predicate: () => boolean | Promise<boolean>, detail = "native subagent progress") {
   for (let i = 0; i < 300; i++) { if (await predicate()) return; await delay(10); }
   assert.fail(`Timed out waiting for ${detail}.`);

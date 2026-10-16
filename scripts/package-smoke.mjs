@@ -35,7 +35,7 @@ import subagents, { createSubagentsExtension, DEFAULT_POLICY } from "pi-d-chat/s
 import { codingEnv, codingRegistry } from "./dist/coding.js";
 import { executeExtensionCommand, extensionCommands, watchExtensionFooter } from "./dist/extension-ui.js";
 import { Resources } from "./dist/resources.js";
-import { Jobs } from "./dist/subagents/state.js";
+import { COMPLETION_ENTRY, Jobs } from "./dist/subagents/state.js";
 import { readJob, resultView } from "./dist/subagents/view.js";
 import { openPersistentChat } from "./dist/session.js";
 const [extension, workspace, session, config] = process.argv.slice(2);
@@ -102,7 +102,10 @@ try {
       assert(!JSON.stringify(transcript).includes("PACKAGED-ASSIGNED-SKILL")); assert(!JSON.stringify(transcript).includes("INSTALLED-SECTION-OK"));
       return fauxAssistantMessage("PACKAGED-BASELINE-REPORT");
     }
-    if (transcript.messages.filter((message) => message.role !== "system").at(-1)?.role === "toolResult") return fauxAssistantMessage("Verified compiled orchestration.");
+    const last = transcript.messages.at(-1), latestUser = transcript.messages.findLast((message) => message.role === "user");
+    if (JSON.stringify(latestUser?.content).includes("[Subagent completion]")) return last?.role === "toolResult" && last.toolName === "agent_results"
+      ? fauxAssistantMessage("PACKAGED-AUTOMATIC-COMPLETION") : fauxAssistantMessage(fauxToolCall("agent_results", { jobId }), { stopReason: "toolUse" });
+    if (last?.role === "toolResult") return fauxAssistantMessage("Verified compiled orchestration.");
     if (user.includes("Queue packaged message.")) return fauxAssistantMessage(fauxToolCall("agent_message", { jobId, worker: 1, message: "PACKAGED-WORKER-MESSAGE" }), { stopReason: "toolUse" });
     return fauxAssistantMessage(fauxToolCall("delegate", { tasks: [
         { name: "Package reviewer", task: "Give an offline fixture report.", role: "reviewer", skills: ["package-review"], extensions: ["install-probe"] },
@@ -120,7 +123,11 @@ try {
   assert.equal(ack.status, "queued"); assert.equal(ack.mode, "steer"); assert.match(ack.requestId, /^subagent-message:/);
   assert.equal((await chat.harness.commit((tx) => tx.submissionByRequest(ack.conversationId, ack.requestId), context)).status, "queued");
   const running = await readJob(chat.harness, chat.conversation.id, jobId, context); assert.equal(resultView(running.job, running.workers).status, "running");
-  workerGate.resolve(); await chat.harness.waitForTask(jobId, context);
+  const delegation = (await chat.conversation.context(context)).messages.find((message) => message.role === "toolResult" && message.toolName === "delegate");
+  assert(delegation.details.completionTaskId);
+  workerGate.resolve(); await chat.harness.waitForTask(delegation.details.completionTaskId, context); await chat.conversation.waitForIdle(context);
+  assert.equal((await chat.conversation.context(context)).entries.filter((entry) => entry.kind === COMPLETION_ENTRY).length, 1);
+  assert.match(JSON.stringify((await chat.conversation.context(context)).messages), /PACKAGED-AUTOMATIC-COMPLETION/);
   const saved = await readJob(chat.harness, chat.conversation.id, jobId, context), view = resultView(saved.job, saved.workers);
   assert.equal(view.status, "completed"); assert.equal(view.workers[0].report, "PACKAGED-MESSAGE-REPORT"); assert.equal(view.workers[1].report, "PACKAGED-BASELINE-REPORT");
   const children = await chat.harness.commit((tx) => tx.scanConversations({ ownerConversationId: chat.conversation.id }, 10), context);
@@ -132,7 +139,7 @@ try {
     assert.equal(saved.job.input.tasks[index].capabilities.skills.length, index === 0 ? 1 : 0);
     if (index === 0) assert.match(agent.instructions, /assigned reviewer subagent/);
   }
-  assert.equal(faux.state.callCount, 9);
+  assert.equal(faux.state.callCount, 11);
   assert.equal((await chat.harness.inspect(context)).tasks.length, 0);
 } finally { workerGate.resolve(); await chat.close(); }
 `;

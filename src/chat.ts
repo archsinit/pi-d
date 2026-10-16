@@ -25,6 +25,8 @@ export type ChatHandle = {
   };
   beforeSubmit?: () => void;
   beforeModel?: () => Promise<void>;
+  /** Release this open host's native model-request gate only after successful auth/recovery preflight. */
+  allowModel?: () => void;
   command?: (text: string, ui: ChatUI, signal: AbortSignal) => Promise<CommandResult>;
   close: () => Promise<void>;
 };
@@ -97,8 +99,9 @@ export async function mountChat(initial: ChatHandle, terminal: Terminal, animate
     });
   };
   const resume = async () => {
-    try { await chat.beforeModel?.(); if (!closing) chat.harness.resume(); }
-    catch (error) { report(error); } // Local diagnostics/login/interrupt remain usable while paused.
+    const owner = chat;
+    try { await owner.beforeModel?.(); if (!closing && chat === owner) { owner.allowModel?.(); owner.harness.resume(); } }
+    catch (error) { if (chat === owner) report(error); } // Local diagnostics/login/interrupt remain usable while paused.
   };
   const switchSession = async (file: string, fresh: boolean, signal: AbortSignal) => {
     if (!chat.sessions) throw new Error("Session selection is unavailable.");
@@ -145,6 +148,7 @@ export async function mountChat(initial: ChatHandle, terminal: Terminal, animate
       await owner.beforeModel?.();
       controller.signal.throwIfAborted();
       if (closing) return;
+      owner.allowModel?.();
       owner.beforeSubmit?.();
       const submission = await owner.conversation.submit({ type: "input", content, whenBusy }, context);
       admitted = true;

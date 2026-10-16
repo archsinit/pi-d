@@ -17,10 +17,10 @@ import { extensionCommands } from "../src/extension-ui.ts";
 import { defineChatExtension } from "../src/extensions.ts";
 import { Resources } from "../src/resources.ts";
 import { createSubagentsExtension } from "../src/subagents/index.ts";
-import { Jobs } from "../src/subagents/state.ts";
+import { COMPLETION_ENTRY, Jobs } from "../src/subagents/state.ts";
 import { readJob, resultView } from "../src/subagents/view.ts";
 import { model, testModels } from "./models.ts";
-import { gate, until, workerName } from "./subagent-fixtures.ts";
+import { completionJob, gate, until, workerName } from "./subagent-fixtures.ts";
 import { TestTerminal } from "./terminal.ts";
 
 const context = BACKGROUND_CONTEXT;
@@ -35,9 +35,14 @@ test("normal coding startup includes built-in subagents without external discove
     const wrapper = join(directory, "configured-subagents.ts");
     await writeFile(wrapper, 'import { createSubagentsExtension } from "pi-d-chat/subagents"; export default createSubagentsExtension({ concurrency: 1 });\n');
     await assert.rejects(codingRegistry(resources, [wrapper]), /Subagents are built in.*Remove the redundant/);
-    const { models, faux } = testModels({ responses: Array.from({ length: 5 }, () => (transcript) => workerName(transcript) ? fauxAssistantMessage("BUILT-IN-WORKER-REPORT")
-      : transcript.messages.filter((message) => message.role !== "system").at(-1)?.role === "toolResult" ? fauxAssistantMessage("Built-in delegation verified.")
-        : fauxAssistantMessage(fauxToolCall("delegate", { tasks: [{ name: "Loaded worker", task: "Report from the built-in worker." }] }), { stopReason: "toolUse" })) });
+    const { models, faux } = testModels({ responses: Array.from({ length: 8 }, () => (transcript) => {
+      if (workerName(transcript)) return fauxAssistantMessage("BUILT-IN-WORKER-REPORT");
+      const jobId = completionJob(transcript), last = transcript.messages.at(-1);
+      if (jobId !== undefined) return last?.role === "toolResult" && last.toolName === "agent_results" ? fauxAssistantMessage("Built-in completion reported.")
+        : fauxAssistantMessage(fauxToolCall("agent_results", { jobId }), { stopReason: "toolUse" });
+      return last?.role === "toolResult" ? fauxAssistantMessage("Built-in delegation verified.")
+        : fauxAssistantMessage(fauxToolCall("delegate", { tasks: [{ name: "Loaded worker", task: "Report from the built-in worker." }] }), { stopReason: "toolUse" });
+    }) });
     const harness = await Harness.open(new MemoryStorage(), { models, registry: loaded, env: ({ cwd }) => new NodeExecutionEnv({ cwd: cwd ?? directory }) }, context);
     try {
       const root = await harness.root(context, { agent: { model, cwd: directory } });
@@ -52,8 +57,11 @@ test("normal coding startup includes built-in subagents without external discove
       for (const name of ["agents", "agent-show", "agent-stop"]) assert(controls.some((command) => command.name === name));
       const input = await root.submit({ type: "input", content: "Exercise built-in delegation without extension setup." }, context); assert.equal((await input.wait(context)).status, "done");
       const jobId = (await harness.snapshot(Jobs, root.id, context))!.recent[0]; await harness.waitForTask(jobId, context);
+      await until(async () => JSON.stringify((await root.context(context)).messages).includes("Built-in completion reported."));
+      await root.waitForIdle(context);
       const saved = await readJob(harness, root.id, jobId, context); assert.equal(resultView(saved.job, saved.workers).workers[0].report, "BUILT-IN-WORKER-REPORT");
-      assert.equal(faux.state.callCount, 3);
+      assert.equal((await root.context(context)).entries.filter((entry) => entry.kind === COMPLETION_ENTRY).length, 1);
+      assert.equal(faux.state.callCount, 5);
       assert.equal((await harness.snapshot(Jobs, root.id, context))?.recent.length, 1);
       await root.configure({ extensions: { remove: [loaded.snapshot().extension("pi-d-subagents")!] } }, context);
       assert(!(await root.agent(context)).tools.some((tool) => tool.name === "delegate"));
@@ -94,7 +102,7 @@ test("local job inspection/completion/footer is read-only, works without preflig
     const name = workerName(transcript);
     if (name) { reached++; await gate(stops[name === "A" ? 0 : 1].promise, options?.signal); return fauxAssistantMessage([fauxThinking("PRIVATE-CHILD-THINKING"), fauxText(`REPORT-${name}`)]); }
     return transcript.messages.filter((message) => message.role !== "system").at(-1)?.role === "toolResult" ? fauxAssistantMessage("Background acknowledged.")
-      : fauxAssistantMessage(fauxToolCall("delegate", { tasks: [{ name: "A", task: "Investigate A." }, { name: "B", task: "Investigate B." }], background: true }), { stopReason: "toolUse" });
+      : fauxAssistantMessage(fauxToolCall("delegate", { notify: false, tasks: [{ name: "A", task: "Investigate A." }, { name: "B", task: "Investigate B." }], background: true }), { stopReason: "toolUse" });
   }) });
   const extension = createSubagentsExtension(), registry = createRegistry(); registry.install(extension);
   const storage = new MemoryStorage(), harness = await Harness.open(storage, { models, registry,
@@ -144,7 +152,7 @@ test("local individual/whole-job stops cancel unrestricted concurrent assignment
   const { models, faux } = testModels({ responses: Array.from({ length: 30 }, () => async (transcript, options) => {
     if (workerName(transcript)) { started++; await gate(stop.promise, options?.signal); return fauxAssistantMessage("Late report."); }
     return transcript.messages.at(-1)?.role === "toolResult" ? fauxAssistantMessage("Acknowledged.")
-      : fauxAssistantMessage(fauxToolCall("delegate", { tasks: [1, 2, 3].map((index) => ({ name: `Worker ${index}`, task: "Wait." })), background: true }), { stopReason: "toolUse" });
+      : fauxAssistantMessage(fauxToolCall("delegate", { notify: false, tasks: [1, 2, 3].map((index) => ({ name: `Worker ${index}`, task: "Wait." })), background: true }), { stopReason: "toolUse" });
   }) });
   const registry = createRegistry(); registry.install(createSubagentsExtension({ concurrency: 1 }));
   const harness = await Harness.open(new MemoryStorage(), { models, registry, env: () => new NodeExecutionEnv({ cwd: directory }) }, context);

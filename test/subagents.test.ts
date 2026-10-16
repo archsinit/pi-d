@@ -20,7 +20,8 @@ import { gate, until, userText, workerName, toolResults } from "./subagent-fixtu
 const context = BACKGROUND_CONTEXT;
 const assignments = (names: string[]) => names.map((name) => ({ name, task: `Investigate ${name} and cite evidence.` }));
 const call = (name: string, args: { [key: string]: JsonValue }) => fauxAssistantMessage(fauxToolCall(name, args), { stopReason: "toolUse" });
-const delegate = (names = ["A"]) => call("delegate", { tasks: assignments(names), background: false, context: "SHARED-BRIEF" });
+// These focused execution tests deliberately use silent jobs; default callbacks have their own suite.
+const delegate = (names = ["A"]) => call("delegate", { tasks: assignments(names), notify: false, background: false, context: "SHARED-BRIEF" });
 const afterTool = (transcript: TranscriptContext) => transcript.messages.filter((message) => message.role !== "system").at(-1)?.role === "toolResult";
 async function fixture(respond: FauxResponseFactory, options: Partial<SubagentPolicy> = {}, harnessOptions: Partial<HarnessOptions> = {}) {
   const directory = await realpath(await mkdtemp(join(tmpdir(), "pi-d-subagents-")));

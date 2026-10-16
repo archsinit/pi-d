@@ -108,7 +108,7 @@ async function main(): Promise<void> {
   const catalog = new SessionCatalog();
   const open = async (file: string, settings: Pick<Parameters<typeof openPersistentChat>[2], "model" | "thinkingLevel" | "cwd" | "defaultCwd"> = {}): Promise<ChatHandle> => {
     const chat = await openPersistentChat(file, models, {
-      ...settings, defaults: DEFAULT_CHAT_AGENT, onReport: report, registry, env: codingEnv, onLockLost,
+      ...settings, defaults: DEFAULT_CHAT_AGENT, onReport: report, registry, env: codingEnv, onLockLost, gateModelWork: true,
     });
     try {
       chat.command = chatCommands(chat, models, resources);
