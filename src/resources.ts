@@ -2,8 +2,12 @@ import { readFile, readdir, realpath, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { parse } from "yaml";
+import type { Extension } from "@earendil-works/pi-durable";
 
 export type Skill = { name: string; description: string; filePath: string; disableModelInvocation: boolean };
+// Host-only metadata on the prompt extension. Symbol.for also works across the source/jiti loader boundary.
+export const skillSource = Symbol.for("pi-d.skill-source");
+export type SkillSourceExtension = Extension & { readonly [skillSource]?: (cwd: string) => ReturnType<Resources["skills"]> };
 export const expandPath = (path: string) => path.startsWith("~/") ? join(homedir(), path.slice(2)) : resolve(path);
 export const xml = (text: string) => text.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;").replaceAll("'", "&apos;");
 

@@ -16,6 +16,7 @@ Offline renderer capture with scripted output.
 - Keep separate project sessions with saved models, reasoning levels and workspaces.
 - Steer a running task or queue a follow-up through Durable.
 - Load AGENTS instructions, skills and trusted Durable extensions, including local commands, UI-only messages/toasts and footer status.
+- Experiment with [opt-in subagents](docs/subagents.md): explicit per-worker skills/extensions, normal coding tools without worker-count/time/call budgets, non-nesting native tasks, nonblocking coordinator steering/cancellation and an isolated launch helper. Disabled by default.
 
 ## Quick start
 
@@ -112,7 +113,7 @@ Keep these limits in mind:
 - Back up a closed database. Copying a live SQLite main file can omit its write-ahead log.
 - Reset and compaction retain earlier entries in storage, but the display shows only active context. There is no archive browser or export command.
 - The footer's `ctx ~` estimates active context. It does not measure remaining subscription quota or cumulative usage.
-- pi-d has no image-upload UI, manual `/compact`, package installer or orchestration tools. It does not guarantee recovery from host power loss.
+- pi-d has no image-upload UI, manual `/compact` or package installer. [Background delegation](docs/subagents.md) is an optional experimental extension, not a built-in orchestration mode. Recovery from host power loss is not guaranteed.
 
 Read [Usage and safety](docs/usage.md) for paths, authentication, recovery and discovery rules. Read the [extension guide](docs/extensions.md) before loading executable files. Extensions use Durable's format and have full account access.
 
