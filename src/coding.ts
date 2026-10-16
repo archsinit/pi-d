@@ -6,7 +6,7 @@ import { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node";
 import { CodingTools } from "@earendil-works/pi-durable/tools";
 import { createJiti } from "jiti";
 import { validateChatExtensions } from "./extension-ui.ts";
-import { expandPath, loadAgents, Resources, skillPrompt, xml } from "./resources.ts";
+import { expandPath, loadAgents, Resources, skillPrompt, skillSource, xml, type SkillSourceExtension } from "./resources.ts";
 
 // Adapted from Pi 1.2.0's standard prompt/tool contributions; see NOTICE.
 const snippets: Record<string, string> = {
@@ -24,12 +24,12 @@ const guidelines: Record<string, string[]> = {
   write: ["Use write only for new files or complete rewrites."],
 };
 
-export function codingPrompt(resources: Resources, onReport?: (message: string) => void): Extension {
+export function codingPrompt(resources: Resources, onReport?: (message: string) => void): SkillSourceExtension {
   const cwd = (input: PromptInput) => {
     if (!input.env) throw new Error("Coding requires an execution environment.");
     return input.env.cwd;
   };
-  return defineExtension({ name: "pi-d-prompt", sections: [
+  return Object.assign(defineExtension({ name: "pi-d-prompt", sections: [
     section("preamble", () => "You are an expert coding assistant operating inside pi-d, a coding agent harness. You help users by reading files, executing commands, editing code, and writing new files.", { tag: false }),
     section("tools", ({ agent }) => `${agent.tools.map((tool) => `- ${tool.name}: ${snippets[tool.name] ?? tool.description}`).join("\n") || "(none)"}\n\nIn addition to the tools above, you may have access to other custom tools depending on the project.`),
     section("rules", ({ agent }) => [...agent.tools.flatMap((tool) => guidelines[tool.name] ?? []), "Be concise in your responses", "Show file paths clearly when working with files"].map((rule) => `- ${rule}`).join("\n")),
@@ -44,7 +44,7 @@ export function codingPrompt(resources: Resources, onReport?: (message: string) 
       return input.agent.tools.some((tool) => tool.name === "read") ? skillPrompt(skills) : undefined;
     }),
     section("cwd", (input) => cwd(input)),
-  ] });
+  ] }), { [skillSource]: (cwd: string) => resources.skills(cwd) });
 }
 
 export async function workspacePath(path: string): Promise<string> {
@@ -72,6 +72,7 @@ export async function codingRegistry(resources: Resources, paths: string[] = [],
   const packages = ["@earendil-works/pi-durable", "@earendil-works/pi-ai", "@earendil-works/pi-tui", "@earendil-works/chord", "typebox"];
   const alias: Record<string, string> = {
     "pi-d-chat/extensions": fileURLToPath(new URL(import.meta.url.endsWith(".ts") ? "./extensions.ts" : "./extensions.js", import.meta.url)),
+    "pi-d-chat/subagents": fileURLToPath(new URL(import.meta.url.endsWith(".ts") ? "./subagents/index.ts" : "./subagents/index.js", import.meta.url)),
   };
   for (const name of packages) {
     const manifest = await packageManifest(name);

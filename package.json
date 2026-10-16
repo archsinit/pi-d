@@ -17,10 +17,14 @@
     "./extensions": {
       "types": "./dist/extensions.d.ts",
       "import": "./dist/extensions.js"
+    },
+    "./subagents": {
+      "types": "./dist/subagents/index.d.ts",
+      "import": "./dist/subagents/index.js"
     }
   },
   "files": [
-    "bin/", "dist/", "docs/comparison.md", "docs/extensions.md", "docs/usage.md", "docs/preview.svg", "licenses/", "LICENSE", "NOTICE", "npm-shrinkwrap.json"
+    "bin/", "dist/", "docs/comparison.md", "docs/extensions.md", "docs/subagents.md", "docs/usage.md", "docs/preview.svg", "licenses/", "LICENSE", "NOTICE", "npm-shrinkwrap.json"
   ],
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
@@ -28,10 +32,11 @@
     "test:package": "npm run build && node scripts/package-smoke.mjs",
     "start": "node --disable-warning=ExperimentalWarning src/cli.ts",
     "demo": "node --disable-warning=ExperimentalWarning src/cli.ts --demo",
+    "subagents:isolated": "node --disable-warning=ExperimentalWarning bin/pi-d-subagents.mjs",
     "check": "tsc --noEmit",
     "test": "node --disable-warning=ExperimentalWarning --test test/*.test.ts",
     "preview": "node --disable-warning=ExperimentalWarning scripts/preview.ts",
-    "smoke": "python3 scripts/terminal-smoke.py"
+    "smoke": "python3 scripts/terminal-smoke.py && python3 scripts/subagents-smoke.py"
   },
   "engines": {
     "node": ">=22.19.0"

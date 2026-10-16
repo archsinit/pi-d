@@ -186,6 +186,10 @@ pi-d --extension ./trusted-extension.ts
 
 Relative `--skill` and `--extension` paths resolve from the shell's launch directory, not the saved workspace or `--cwd`. Use absolute paths when reopening from elsewhere. Normal instruction/skill discovery has no disable flags or project-trust prompt; `--no-extensions` disables automatic executable-extension discovery only.
 
+### Optional subagents
+
+An experimental, explicitly loaded Durable extension provides nonblocking `delegate`/`agent_results`, model-facing `agent_stop`, nonblocking native steering/follow-up input through orchestrator-only `agent_message`, explicit per-worker `skills`/`extensions` selections from the parent's available capabilities (omitted/empty lists mean none), normal coding tools without worker-count/concurrency/time/call budgets, no nested delegation, local `/agents`/`/agent-show`/`/agent-stop` and footer progress. Normal startup does not enable it. Use the [isolated experiment helper and subagent guide](subagents.md) rather than selecting everyday configuration/sessions. Configuration isolation and tool filtering are **not** an OS sandbox; live provider behavior and cost remain unverified.
+
 ### Durable extensions
 
 Normal chat startup automatically loads trusted extensions from `~/.config/pi-d/extensions/`, or `$XDG_CONFIG_HOME/pi-d/extensions/` when the XDG base is absolute. Top-level `.ts`, `.js`, `.mjs` and `.cjs` files are loaded in name order. Child directories load the first entry point among `index.ts`, `index.js`, `index.mjs`, `index.cjs`. Hidden entries, `.d.ts`, `node_modules` and deeper directories are not scanned. Symlinks are supported. Project extension directories and `~/.pi/agent` are never auto-loaded.
@@ -246,6 +250,8 @@ This is a local installation candidate, not a public npm release. `private: true
 
 The offline suite uses the Harness, faux providers, temporary workspaces/stores and mocked OAuth endpoints/socket binding. It covers tool execution, committed streaming/thinking, cancellation, persisted queue/recovery, compaction/AGENTS refresh, resource discovery, external TypeScript extensions, UI-only messages/toasts (rendering, copy/focus, timeouts, cancellation and cleanup with zero model/context/storage effects), session handoff, credential persistence, browser/device flows, storage failure, context/diff display, Unicode, resizing, search and terminal cleanup. The Codex payload test stops before network access.
 
-`npm run smoke` uses a real offline POSIX PTY. `npm run test:package` builds and checks exact package contents, reviewed dependency versions, isolated cached local/global-prefix installs, SQLite admission, external extensions and real PTYs. It neither replaces the user's command nor uses a live session. Run `npm ci --ignore-scripts` first to populate npm's hydration cache. These offline checks are not a final-release sign-off.
+Subagent tests additionally cover native ownership and unrestricted concurrency/calls, model/local cancellation, v1 migrations and long downtime, SQLite lost-commit-ack recovery, SIGKILL recovery, read-only inspection and isolated-helper guards without live credentials.
+
+`npm run smoke` uses real offline POSIX PTYs, including the separate subagent helper. `npm run test:package` builds and checks exact package contents, reviewed dependency versions, isolated cached local/global-prefix installs, SQLite admission, external extensions and real PTYs. It neither replaces the user's command nor uses a live session. Run `npm ci --ignore-scripts` first to populate npm's hydration cache. These offline checks are not a final-release sign-off.
 
 Release verification still needs live browser/device approval, provider access and quota checks, real model/tool/skill/extension runs and live compaction. Current offline checks run on macOS. They do not establish Linux, ARM, Windows/Bun, shared-disk or host-power-loss behavior, or performance with very large workspaces, histories and resource collections.

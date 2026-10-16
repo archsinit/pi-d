@@ -28,6 +28,10 @@ pi-d --no-extensions --extension ./only-this.ts
 - Missing global directories and dangling discovered symlinks are ignored. Unreadable directories, invalid exports and extension import errors fail startup; `--no-extensions` bypasses global discovery without disabling explicit files. Missing explicit files remain errors.
 - `--help`, `--list-models`, `--login`, `--logout` and `--demo` do not discover or load extensions. Startup does not create the global directory or install code for you.
 
+## Optional subagents
+
+The experimental `pi-d-chat/subagents` export supplies a normal Durable extension with native background jobs, explicit per-worker skill/extension assignment, non-nesting owned workers with normal coding tools and no extension execution budgets, orchestrator-only native inbox messaging, model/local cancellation, inspection and footer progress. All parent-selected extensions are eligible when explicitly assigned; child conversations stay headless, so their `piD` UI adapters are not mounted or invoked. It is **not automatically installed or loaded**. Prefer its separate HOME/XDG/session/workspace launch helper when experimenting; see [Subagents](subagents.md) for opt-in loading, nonblocking coordinator control, ownership/recovery semantics and non-sandbox limitations.
+
 ## Small complete example
 
 ```ts
