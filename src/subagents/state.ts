@@ -1,4 +1,4 @@
-import { defineDoc, type ConversationId, type ModelRef, type SubmissionId, type TaskId } from "@earendil-works/pi-durable";
+import { defineDoc, type ConversationId, type ModelRef, type SubmissionId, type TaskId, type TaskOutcome } from "@earendil-works/pi-durable";
 import type { ModelThinkingLevel } from "@earendil-works/pi-ai";
 
 export const EXTENSION = "pi-d-subagents";
@@ -29,6 +29,12 @@ export type WorkerResult = {
   taskId?: TaskId<WorkerResult>; conversationId?: ConversationId; report: string; error?: string; truncated: boolean;
 };
 export type JobResult = { status: "completed" | "partial" | "failed" | "aborted"; workers: WorkerResult[] };
+export type JobStatus = JobResult["status"] | "running" | "completing";
+/** One projection for collection and inspection, including native outcomes without an application result. */
+export function workerOutcome(input: JobInput, index: number, value: TaskOutcome<WorkerResult>, taskId: TaskId<WorkerResult>): WorkerResult {
+  return value.result ?? { index, name: input.tasks[index].name, taskId, status: value.status === "aborted" ? "aborted" : "failed",
+    report: "", truncated: false, error: `Worker task ${value.status}; inspect native task diagnostics.` };
+}
 // Retain the version-1 wave fields so paused stores can recover without re-admitting assignments.
 export type JobCheckpoint = {
   next: number; workers: TaskId<WorkerResult>[]; wave: TaskId<WorkerResult>[]; results: WorkerResult[];
@@ -92,7 +98,7 @@ export function jobResult(workers: WorkerResult[]): JobResult {
   const completed = workers.filter((worker) => worker.status === "completed").length;
   return { status: completed === workers.length ? "completed" : completed ? "partial" : workers.every((worker) => worker.status === "aborted") ? "aborted" : "failed", workers };
 }
-export function report(jobId: TaskId, result: JobResult): string {
+export function report(jobId: TaskId, result: { status: JobStatus; workers: WorkerResult[] }): string {
   return [`Subagent job ${jobId}: ${result.status}. These are delegated results, not independent verification.`,
     ...result.workers.map((worker) => `\n${worker.index + 1}. ${worker.name} — ${worker.status}${worker.conversationId ? ` (conversation ${worker.conversationId})` : ""}\n${worker.error ?? worker.report}`),
   ].join("\n");

@@ -1,13 +1,13 @@
 import type { Context } from "@earendil-works/chord/context";
 import {
   AssistantEntry, configure, defineTask, LiveDoc, type RegistrySnapshot, type RunningTask, type SubmissionRecord,
-  type TaskId, type TaskOutcome, type TaskRuntime, type ToolRegistration, type Tx,
+  type TaskId, type TaskRuntime, type ToolRegistration, type Tx,
 } from "@earendil-works/pi-durable";
 import { getOrThrow } from "@earendil-works/pi-durable/env";
 import { workerTools, legacyTools } from "./tools.ts";
 import { skillInstructions } from "./profile.ts";
 import {
-  Control, EXTENSION, JOB_KIND, Jobs, jobResult, Messages, Worker, WORKER_KIND,
+  Control, EXTENSION, JOB_KIND, Jobs, jobResult, Messages, Worker, WORKER_KIND, workerOutcome,
   type JobCheckpoint, type JobInput, type JobResult, type WorkerCheckpoint, type WorkerInput, type WorkerResult,
 } from "./state.ts";
 
@@ -150,10 +150,6 @@ export const SubagentWorker = defineTask<WorkerInput, WorkerCheckpoint, WorkerRe
   abort: async (task, runtime, context) => { await finish(task, runtime, context, true); },
 });
 
-function outcome(input: JobInput, index: number, value: TaskOutcome<WorkerResult>, taskId: TaskId<WorkerResult>): WorkerResult {
-  return value.result ?? { index, name: input.tasks[index].name, taskId, status: value.status === "aborted" ? "aborted" : "failed",
-    report: "", truncated: false, error: `Worker task ${value.status}; inspect native task diagnostics.` };
-}
 function cancelledResults(input: JobInput, results: WorkerResult[]): WorkerResult[] {
   const byIndex = new Map(results.map((result) => [result.index, result]));
   return input.tasks.map((assignment, index) => byIndex.get(index) ?? {
@@ -203,7 +199,7 @@ export const SubagentJob = defineTask<JobInput, JobCheckpoint, JobResult>({
           if (await Promise.race([done, changed.promise])) break;
         }
         const outcomes = await runtime.outcomes(checkpoint.wave, context), start = checkpoint.next - checkpoint.wave.length;
-        const results = [...checkpoint.results, ...outcomes.map((value, index) => outcome(task.input, start + index, value, checkpoint.wave[index]))];
+        const results = [...checkpoint.results, ...outcomes.map((value, index) => workerOutcome(task.input, start + index, value, checkpoint.wave[index]))];
         await runtime.commit(async (tx) => {
           const control = await tx.doc(Control, task.id);
           return { status: "running", checkpoint: { ...checkpoint, results, wave: [],
@@ -223,7 +219,7 @@ export const SubagentJob = defineTask<JobInput, JobCheckpoint, JobResult>({
   },
   abort: async (task, runtime, context) => {
     const outcomes = await runtime.outcomes(task.state.checkpoint.workers, context);
-    const results = outcomes.map((value, index) => outcome(task.input, index, value, task.state.checkpoint.workers[index]));
+    const results = outcomes.map((value, index) => workerOutcome(task.input, index, value, task.state.checkpoint.workers[index]));
     await runtime.commit(async (tx) => {
       const jobs = await tx.doc(Jobs, runtime.conversationId); jobs.active = jobs.active.filter((id) => id !== task.id);
       return { status: "terminal", outcome: { status: "aborted", result: { status: "aborted", workers: cancelledResults(task.input, results) } } };

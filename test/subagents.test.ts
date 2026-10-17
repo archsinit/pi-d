@@ -239,7 +239,7 @@ for (const toolName of ["delegate", "agent_results", "agent_stop", "agent_messag
     assert((await child.context(context)).messages.some((message) => message.role === "toolResult" && message.isError));
     assert.equal((await f.harness.snapshot(Jobs, f.root.id, context))?.recent.length, 1);
     const selected = f.extension.tools!.find((tool) => tool.name === toolName)!;
-    await assert.rejects(Promise.resolve().then(() => selected.execute(args, { snapshot: async () => ({ owner: { jobId: snapshot.job.id } }) } as unknown as ToolExecutionApi, context)), /Workers cannot delegate|Only the orchestrator/);
+    await assert.rejects(Promise.resolve().then(() => selected.execute(args, { conversationId: child.id, snapshot: async () => ({ owner: { jobId: snapshot.job.id } }) } as unknown as ToolExecutionApi, context)), /Workers cannot delegate|Only the orchestrator/);
   } finally { await f.close(); }
 });
 

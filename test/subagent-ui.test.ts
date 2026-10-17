@@ -134,6 +134,7 @@ test("local job inspection/completion/footer is read-only, works without preflig
     const foreign = await harness.createConversation({ ownership: { kind: "ownerless" } }, context);
     await assert.rejects(readJob(harness, foreign.id, jobId, context), /not found in this conversation/);
     await send(`/agent-stop ${jobId} 1`);
+    await harness.waitForTask((await readJob(harness, root.id, jobId, context)).workers.find((worker) => worker.input.index === 0)!.id, context);
     let snapshot = await readJob(harness, root.id, jobId, context), view = resultView(snapshot.job, snapshot.workers);
     assert.equal(view.status, "running"); assert.equal(view.workers[0].status, "aborted");
     assert.notEqual(snapshot.workers.find((worker) => worker.input.index === 1)?.state.status, "terminal");
@@ -163,8 +164,10 @@ test("local individual/whole-job stops cancel unrestricted concurrent assignment
     const input = await root.submit({ type: "input", content: "Background work." }, context); await input.wait(context); await until(() => started === 3);
     const jobId = (await harness.snapshot(Jobs, root.id, context))!.recent[0], calls = faux.state.callCount;
     app.ui.composer.editor.setText(`/agent-stop ${jobId} 3`); terminal.send("\r"); await terminal.flush(); await until(() => !app.ui.busy);
+    await harness.waitForTask((await readJob(harness, root.id, jobId, context)).workers.find((worker) => worker.input.index === 2)!.id, context);
     const partial = await readJob(harness, root.id, jobId, context); assert.equal(partial.workers.find((worker) => worker.input.index === 2)?.state.status, "terminal");
     app.ui.composer.editor.setText(`/agent-stop ${jobId}`); terminal.send("\r"); await terminal.flush(); await until(() => !app.ui.busy);
+    await harness.waitForTask(jobId, context);
     const snapshot = await readJob(harness, root.id, jobId, context), view = resultView(snapshot.job, snapshot.workers);
     assert.equal(view.status, "aborted"); assert(view.workers.every((worker) => worker.status === "aborted"));
     assert.equal(snapshot.workers.length, 3); assert.equal(faux.state.callCount, calls);

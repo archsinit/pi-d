@@ -3,23 +3,32 @@ import { defineTool, hook, section, ToolTask, wrapSection, type JsonObject, type
 import { defineChatExtension, type ChatExtension, type ChatCommandContext, type ChatExtensionContext } from "../extensions.ts";
 import { workerTools, legacyTools } from "./tools.ts";
 import { assignments, orchestrationTools } from "./profile.ts";
-import { Call, Control, EXTENSION, JOB_KIND, Jobs, Worker, report, bounded, type JobResult, type SubagentPolicy } from "./state.ts";
+import { Call, EXTENSION, JOB_KIND, Jobs, Worker, report, bounded, type JobResult, type SubagentPolicy } from "./state.ts";
 import { SubagentJob, SubagentWorker } from "./tasks.ts";
 import { SubagentCompletion } from "./completion.ts";
 import { messageTool } from "./messaging.ts";
 import { id, readJob, resultView } from "./view.ts";
+import { resultsArguments, stopArguments } from "./targets.ts";
+import { reportPage, reportPageText, resultsText } from "./results.ts";
+import { assertOrchestrator, requestSubagentStop } from "./control.ts";
 export { DEFAULT_POLICY, type SubagentPolicy } from "./state.ts";
+export * from "./api.ts";
 
 const nativeId = () => Type.Integer({ minimum: 1, maximum: Number.MAX_SAFE_INTEGER });
 const status = Type.Union([Type.Literal("completed"), Type.Literal("failed"), Type.Literal("aborted")]);
 const resultSchema = Type.Object({
-  jobId: Type.Integer(), status: Type.Union([status, Type.Literal("partial"), Type.Literal("running")]),
+  jobId: Type.Integer(), status: Type.Union([status, Type.Literal("partial"), Type.Literal("running"), Type.Literal("completing")]),
   workers: Type.Array(Type.Object({ index: Type.Integer(), name: Type.String(), status,
     taskId: Type.Optional(Type.Integer()), conversationId: Type.Optional(Type.Integer()), report: Type.String(),
     error: Type.Optional(Type.String()), truncated: Type.Boolean() })),
 });
+const reportPageSchema = Type.Object({ jobId: nativeId(), worker: nativeId(), status, settled: Type.Boolean(), historicallyTruncated: Type.Boolean(),
+  error: Type.Optional(Type.String()), text: Type.String(), offset: Type.Integer(), totalBytes: Type.Integer(), nextOffset: Type.Optional(Type.Integer()) });
 const references = (jobs: Awaited<ReturnType<typeof jobReferences>>) => [...new Set([...(jobs?.active ?? []), ...(jobs?.recent ?? [])])];
-function jobReferences(api: ChatExtensionContext) { return api.harness.snapshot(Jobs, api.conversation.id, api.context); }
+async function jobReferences(api: ChatExtensionContext) {
+  await assertOrchestrator(api.harness, api.conversation.id, api.context);
+  return api.harness.snapshot(Jobs, api.conversation.id, api.context);
+}
 async function selection(argument: string, api: ChatExtensionContext) {
   const parts = argument ? argument.split(/\s+/) : [];
   if (parts.length > 2) throw new Error("Use a job ID and optional 1-based worker number.");
@@ -40,7 +49,7 @@ async function complete(prefix: string, api: ChatExtensionContext) {
   return references(await jobReferences(api)).toSorted((a, b) => b - a).map(String).filter((value) => value.startsWith(prefix)).map((value) => ({ value, label: value }));
 }
 async function show(argument: string, api: ChatCommandContext) {
-  const { job, workers, workerNumber } = await selection(argument, api), view = resultView(job, workers);
+  const { job, workers, conversations, workerNumber } = await selection(argument, api), view = resultView(job, workers);
   if (workerNumber === undefined) {
     const progress = job.input.tasks.map((assignment, index) => {
       const worker = workers.find((record) => record.input.index === index), result = view.workers.find((value) => value.index === index);
@@ -50,12 +59,11 @@ async function show(argument: string, api: ChatCommandContext) {
     api.message([`Job ${job.id} · ${view.status} · ${job.background ? "background" : "legacy foreground"}`,
       `Workspace: ${job.input.profile.cwd}\nModel: ${job.input.profile.model.provider}/${job.input.profile.model.modelId}`,
       "No worker-count, concurrency, deadline, tool-call or saved-report limit. Workers cannot delegate.",
-      ...progress, "", report(job.id, { status: view.status === "running" ? "partial" : view.status, workers: view.workers }),
+      ...progress, "", report(job.id, view),
     ].join("\n")); return;
   }
   const worker = workers.find((record) => record.input.index === workerNumber - 1), result = view.workers.find((value) => value.index === workerNumber - 1);
-  const conversationId = result?.conversationId ?? (worker && worker.state.status !== "terminal" && worker.state.status !== "completing"
-    && worker.state.checkpoint.phase !== "prepare" ? worker.state.checkpoint.conversationId : undefined);
+  const conversationId = (worker && conversations.get(worker.id)) ?? result?.conversationId;
   if (conversationId === undefined) { api.message(`Worker ${workerNumber} has no saved conversation reference. ${result?.error ?? ""}`); return; }
   const child = await api.harness.conversation(conversationId, api.context);
   if (!child) throw new Error("Worker conversation is missing.");
@@ -116,45 +124,38 @@ export function createSubagentsExtension(_legacyOptions: Partial<SubagentPolicy>
   });
   const results = defineTool({
     name: "agent_results", callers: ["model"], replay: "safe",
-    description: "Read subagent results without blocking the orchestrator. Supply jobId for one job; omit it to discover active and recent jobs. Always returns a snapshot, never joins or sleeps (legacy wait:true is ignored). Use agent_stop to interrupt/cancel running work. Do not busy-poll.",
-    parameters: Type.Object({ jobId: Type.Optional(nativeId()) }),
-    structuredOutputSchema: Type.Union([resultSchema, Type.Object({ jobs: Type.Array(resultSchema) })]),
+    description: "Read subagent results without blocking. jobId shows ready reports even while siblings run. Add a 1-based worker for a full report page; continue with its UTF-8 byte offset. Omit jobId to list active/recent jobs; beforeJobId continues that list. Native output bounds do not truncate saved reports. Never joins or sleeps (legacy wait:true is ignored). Do not busy-poll.",
+    parameters: Type.Object({ jobId: Type.Optional(nativeId()), worker: Type.Optional(nativeId()),
+      offset: Type.Optional(Type.Integer({ minimum: 0, maximum: Number.MAX_SAFE_INTEGER })),
+      maxBytes: Type.Optional(Type.Integer({ minimum: 4, maximum: 32000 })), beforeJobId: Type.Optional(nativeId()) }),
+    prepareArguments: resultsArguments,
+    structuredOutputSchema: Type.Union([resultSchema, reportPageSchema, Type.Object({ jobs: Type.Array(resultSchema), nextBeforeJobId: Type.Optional(nativeId()) })]),
     async execute(args, api, context) {
-      if ((await api.snapshot(Worker, api.conversationId, context))?.owner) throw new Error("Only the orchestrator may inspect subagent jobs.");
-      const ids = args.jobId === undefined ? references(await api.snapshot(Jobs, api.conversationId, context)).toSorted((a, b) => b - a) : [args.jobId as TaskId<JobResult>];
-      const views = await Promise.all(ids.map(async (jobId) => { const current = await readJob(api, api.conversationId, jobId, context); return resultView(current.job, current.workers); }));
-      return { output: [{ type: "text", text: views.map((view) => view.status === "running"
-        ? `Subagent job ${view.jobId} is running; ${view.workers.length} results ready. Control remains available through agent_stop.`
-        : report(view.jobId, { status: view.status, workers: view.workers })).join("\n\n") || "No subagent jobs in this conversation." }],
-        structuredOutput: args.jobId === undefined ? { jobs: views } : views[0],
+      await assertOrchestrator(api, api.conversationId, context);
+      const all = args.jobId === undefined ? references(await api.snapshot(Jobs, api.conversationId, context)).toSorted((a, b) => b - a)
+        .filter((value) => args.beforeJobId === undefined || value < args.beforeJobId) : [args.jobId as TaskId<JobResult>];
+      const ids = all.slice(0, 100), snapshots = await Promise.all(ids.map((jobId) => readJob(api, api.conversationId, jobId, context)));
+      const views = snapshots.map(({ job, workers }) => resultView(job, workers));
+      if (args.worker !== undefined) {
+        const page = reportPage(snapshots[0].job, snapshots[0].workers, args.worker, args.offset, args.maxBytes);
+        return { output: [{ type: "text", text: reportPageText(page) }], structuredOutput: page };
+      }
+      const nextBeforeJobId = all.length > ids.length ? ids.at(-1) : undefined;
+      const output = args.jobId === undefined ? views.map((view, index) => `Subagent job ${view.jobId} is ${view.status}; ${view.workers.length}/${snapshots[index].job.input.tasks.length} results ready. Read with agent_results({\"jobId\":${view.jobId}}).`).join("\n")
+        + (nextBeforeJobId === undefined ? "" : `\nContinue listing: agent_results({\"beforeJobId\":${nextBeforeJobId}}).`)
+        : resultsText(views[0], snapshots[0].job.input.tasks.length);
+      return { output: [{ type: "text", text: output || "No subagent jobs in this conversation." }],
+        structuredOutput: args.jobId === undefined ? { jobs: views, ...(nextBeforeJobId === undefined ? {} : { nextBeforeJobId }) } : views[0],
         isError: args.jobId !== undefined && (views[0].status === "failed" || views[0].status === "aborted") };
     },
   });
   const stop = defineTool({
     name: "agent_stop", callers: ["model"], replay: "safe", executionMode: "sequential",
-    description: "Interrupt/cancel subagent work through durable native cancellation. jobId stops a batch; jobId plus 1-based worker stops only that worker. Omit both to stop every active job in this conversation. Returns after the stop request is saved, not after cooperative cleanup; inspect agent_results for settlement. Earlier file/shell effects are not undone.",
+    description: "Interrupt/cancel subagent work through durable native cancellation. jobId stops a batch; jobId plus 1-based worker stops only that worker. Omit both to stop every active job in this conversation. Returns after the stop request is saved, not after cooperative cleanup; inspect agent_results for settlement. Earlier file/shell effects are not undone. Successful jobs with cleanup still pending require the local agent-stop command or the public API with a full Harness.",
     parameters: Type.Object({ jobId: Type.Optional(nativeId()), worker: Type.Optional(nativeId()) }),
+    prepareArguments: stopArguments,
     async execute(args, api, context) {
-      if ((await api.snapshot(Worker, api.conversationId, context))?.owner) throw new Error("Only the orchestrator may control subagents.");
-      if (args.worker !== undefined && args.jobId === undefined) throw new Error("Specify jobId when stopping one worker.");
-      const ids = args.jobId === undefined ? (await api.snapshot(Jobs, api.conversationId, context))?.active ?? [] : [args.jobId as TaskId<JobResult>];
-      for (const jobId of ids) {
-        const { job } = await readJob(api, api.conversationId, jobId, context);
-        if (args.worker !== undefined && args.worker > job.input.tasks.length) throw new Error("Invalid 1-based worker number.");
-      }
-      const marked = await api.commit(async (tx) => {
-        const accepted: number[] = [];
-        for (const jobId of ids) {
-          const current = await tx.task(jobId);
-          if (!current || current.conversationId !== api.conversationId || current.kind !== "pi-d.subagent-job") throw new Error("Subagent job not found in this conversation.");
-          if (current.state.status === "terminal" || current.state.status === "completing") continue;
-          const control = await tx.doc(Control, jobId);
-          if (args.worker === undefined) control.all = true;
-          else if (!control.workers.includes(args.worker - 1)) control.workers.push(args.worker - 1);
-          accepted.push(jobId);
-        }
-        return accepted;
-      }, context);
+      const { jobIds: marked } = await requestSubagentStop(api, api.conversationId, args, context);
       return { output: [{ type: "text", text: marked.length
         ? `Cancellation requested for ${marked.map((job) => `job ${job}${args.worker === undefined ? "" : ` / worker ${args.worker}`}`).join(", ")}. Native cleanup is cooperative; check agent_results for settlement. Earlier effects are not undone.`
         : "No matching active subagent work remains." }] };
@@ -205,24 +206,18 @@ export function createSubagentsExtension(_legacyOptions: Partial<SubagentPolicy>
       { name: "agent-stop", description: "Stop a job, worker, or all jobs through native cancellation", argumentHint: "[job-id] [worker-number] | all",
         async complete(prefix, api) { return [...("all".startsWith(prefix) ? [{ value: "all", label: "all jobs" }] : []), ...await complete(prefix, api)]; },
         async execute(argument, api) {
-          if (argument === "all") {
-            const jobs = await jobReferences(api);
-            await Promise.all((jobs?.active ?? []).map(async (job) => { await api.harness.abortTask(job, api.context); await api.harness.waitForTask(job, api.context); }));
-            api.message("Stopped active subagent jobs. Earlier effects are not undone."); return;
-          }
-          const { job, workers, workerNumber } = await selection(argument, api);
-          const target = workerNumber === undefined ? job : workers.find((worker) => worker.input.index === workerNumber - 1);
-          if (!target) throw new Error("Worker has not started; stop the whole job to cancel queued assignments.");
-          if (target.state.status === "terminal") { api.notify("Subagent work is already settled."); return; }
-          await api.harness.abortTask(target.id, api.context); await api.harness.waitForTask(target.id as TaskId, api.context);
-          api.message(`Stopped ${workerNumber === undefined ? `job ${job.id}` : `worker ${workerNumber} of job ${job.id}`}. Earlier effects are not undone.`);
+          const selected = argument === "all" ? undefined : await selection(argument, api);
+          const receipt = await requestSubagentStop(api.harness, api.conversation.id,
+            selected ? { jobId: selected.job.id, ...(selected.workerNumber === undefined ? {} : { worker: selected.workerNumber }) } : {}, api.context);
+          api.message(receipt.jobIds.length ? "Cancellation requested. Native cleanup is cooperative; inspect /agents for settlement. Earlier effects are not undone."
+            : "No matching active subagent work remains.");
         } },
     ], async footer(api) {
       const jobs = await jobReferences(api), ids = jobs?.active.length ? jobs.active : jobs?.recent.slice(-1) ?? [];
       if (!ids.length) return [];
       const views = await Promise.all(ids.map(async (jobId) => { const { job, workers } = await readJob(api.harness, api.conversation.id, jobId, api.context); return { job, view: resultView(job, workers) }; }));
       const total = views.reduce((sum, { job }) => sum + job.input.tasks.length, 0), settled = views.reduce((sum, { view }) => sum + view.workers.length, 0);
-      const running = views.some(({ view }) => view.status === "running"), state = views[0].view.status;
+      const running = views.some(({ view }) => view.status === "running" || view.status === "completing"), state = views[0].view.status;
       return [{ text: `agents ${settled}/${total}${running ? " bg" + (views.length > 1 ? ` · ${views.length} jobs` : "") : ` ${state}`}`,
         tone: running ? "gold" : state === "completed" ? "green" : "red" }];
     } },

@@ -31,7 +31,8 @@ import { BACKGROUND_CONTEXT as context } from "@earendil-works/chord/context";
 import { createModels } from "@earendil-works/pi-ai/models";
 import { fauxAssistantMessage, fauxProvider, fauxToolCall } from "@earendil-works/pi-ai/providers/faux";
 import { defineChatExtension } from "pi-d-chat/extensions";
-import subagents, { createSubagentsExtension, DEFAULT_POLICY } from "pi-d-chat/subagents";
+import subagents, { createSubagentsExtension, DEFAULT_POLICY, listSubagentJobs, inspectSubagentJob,
+  readSubagentReportPage, requestSubagentStop, admitSubagentMessage } from "pi-d-chat/subagents";
 import { codingEnv, codingRegistry } from "./dist/coding.js";
 import { executeExtensionCommand, extensionCommands, watchExtensionFooter } from "./dist/extension-ui.js";
 import { Resources } from "./dist/resources.js";
@@ -71,6 +72,8 @@ try {
   assert.equal(notice, "INSTALLED-COMMAND-OK ok");
   assert.deepEqual(uiMessages, [["install-probe /install-local", "INSTALLED-MESSAGE-OK", { type: "success" }]]);
   assert.deepEqual(toasts, [["install-probe /install-local", "INSTALLED-TOAST-OK", { timeoutMs: 0 }]]);
+  assert.deepEqual(await listSubagentJobs(chat.harness, chat.conversation.id, context), []);
+  assert.equal(typeof admitSubagentMessage, "function");
   assert.equal(faux.state.callCount, 0);
   assert.equal((await chat.conversation.context(context)).entries.length, 0);
   const footer = watchExtensionFooter(chat, ui, (error) => { throw error; });
@@ -122,7 +125,11 @@ try {
   assert(!messageResult.isError); const ack = messageResult.details;
   assert.equal(ack.status, "queued"); assert.equal(ack.mode, "steer"); assert.match(ack.requestId, /^subagent-message:/);
   assert.equal((await chat.harness.commit((tx) => tx.submissionByRequest(ack.conversationId, ack.requestId), context)).status, "queued");
-  const running = await readJob(chat.harness, chat.conversation.id, jobId, context); assert.equal(resultView(running.job, running.workers).status, "running");
+  const running = await inspectSubagentJob(chat.harness, chat.conversation.id, jobId, context);
+  assert.equal(running.status, "running"); assert.equal(running.settled, false);
+  assert.deepEqual(running.workers[0].capabilities.skills, ["package-review"]);
+  await assert.rejects(admitSubagentMessage(chat.harness, chat.conversation.id,
+    { jobId, worker: 0, message: "Not admitted.", requestId: "packaged-rejected-message" }, context), /positive/);
   const delegation = (await chat.conversation.context(context)).messages.find((message) => message.role === "toolResult" && message.toolName === "delegate");
   assert(delegation.details.completionTaskId);
   workerGate.resolve(); await chat.harness.waitForTask(delegation.details.completionTaskId, context); await chat.conversation.waitForIdle(context);
@@ -130,6 +137,10 @@ try {
   assert.match(JSON.stringify((await chat.conversation.context(context)).messages), /PACKAGED-AUTOMATIC-COMPLETION/);
   const saved = await readJob(chat.harness, chat.conversation.id, jobId, context), view = resultView(saved.job, saved.workers);
   assert.equal(view.status, "completed"); assert.equal(view.workers[0].report, "PACKAGED-MESSAGE-REPORT"); assert.equal(view.workers[1].report, "PACKAGED-BASELINE-REPORT");
+  const page = await readSubagentReportPage(chat.harness, chat.conversation.id, { jobId, worker: 1, maxBytes: 4 }, context);
+  assert.equal(page.text, "PACK"); assert.equal(page.nextOffset, 4); assert.equal(page.historicallyTruncated, false);
+  assert.equal((await inspectSubagentJob(chat.harness, chat.conversation.id, jobId, context)).settled, true);
+  assert.deepEqual((await requestSubagentStop(chat.harness, chat.conversation.id, { jobId }, context)).jobIds, []);
   const children = await chat.harness.commit((tx) => tx.scanConversations({ ownerConversationId: chat.conversation.id }, 10), context);
   assert.equal(children.items.length, 2);
   for (const [index, result] of view.workers.entries()) {
@@ -160,7 +171,7 @@ try {
     }
   };
   writeFileSync(extension, `import { defineChatExtension } from "pi-d-chat/extensions";
-import { createSubagentsExtension } from "pi-d-chat/subagents";
+import { createSubagentsExtension, listSubagentJobs } from "pi-d-chat/subagents";
 import { defineTool, section } from "@earendil-works/pi-durable";
 import { Type as AIType } from "@earendil-works/pi-ai";
 import { fauxText } from "@earendil-works/pi-ai/providers/faux";
@@ -169,7 +180,8 @@ import { visibleWidth } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 import { Value } from "typebox/value";
 export default defineChatExtension({ name: "install-probe", piD: {
-  commands: [{ name: "install-local", description: "Local installation probe", complete: () => [{ value: "ok", label: "ok" }], execute: (argument, api) => {
+  commands: [{ name: "install-local", description: "Local installation probe", complete: () => [{ value: "ok", label: "ok" }], execute: async (argument, api) => {
+    if ((await listSubagentJobs(api.harness, api.conversation.id, api.context)).length) throw new Error("Unexpected startup job.");
     api.notify("INSTALLED-COMMAND-OK " + argument);
     api.message("INSTALLED-MESSAGE-OK", { type: "success" }); api.toast("INSTALLED-TOAST-OK", { timeoutMs: 0 });
   } }],
