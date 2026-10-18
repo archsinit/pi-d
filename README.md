@@ -68,7 +68,7 @@ pi-d --session ./notes.sqlite --cwd /path/to/project --model anthropic/claude-op
 
 You can also sign in with `/login` inside chat. Choose browser or device-code login. Paste callback codes only into the login prompt, never ordinary chat. Completing in-app login can resume unfinished work and consume quota.
 
-New sessions default to `openai-codex/gpt-6.1-sol` with `max` reasoning. Saved sessions retain their model, reasoning and workspace. Use `/model` and `/reasoning` to change them while idle.
+New sessions default to `openai-codex/gpt-6.1-sol` with `medium` reasoning. Saved sessions retain their model, reasoning and workspace. Use `/model` and `/reasoning` to change them while idle.
 
 OpenAI access is subscription-only: pi-d never falls back to `OPENAI_API_KEY`. Other providers use pi-ai's environment or ambient authentication, such as `ANTHROPIC_API_KEY` or `GEMINI_API_KEY`. pi-d stores no API keys and exposes only the Codex OAuth login. Model access depends on your provider account.
 

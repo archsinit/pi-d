@@ -102,19 +102,23 @@ test("model overrides cannot silently switch unfinished native work to another p
   } finally { await first.close(); await rm(directory, { recursive: true, force: true }); }
 });
 
-test("new defaults use native max reasoning; saved settings survive defaults, resets and reopen", async () => {
+test("new defaults use medium reasoning; saved settings survive defaults, resets and reopen", async () => {
   const directory = await mkdtemp(join(tmpdir(), "pi-d-thinking-"));
   const path = join(directory, "chat.sqlite");
   let reasoning: string | undefined;
   const { models, faux } = testModels({ provider: DEFAULT_CHAT_AGENT.model.provider, models: [{ id: "gpt-6.1-sol", reasoning: true }, { id: "small" }],
-    responses: [(_context, options) => { reasoning = options?.reasoning; return fauxAssistantMessage("Offline max answer."); }] });
+    responses: [(_context, options) => { reasoning = options?.reasoning; return fauxAssistantMessage("Offline medium answer."); }] });
   faux.models[0].thinkingLevelMap = { max: "max", xhigh: "xhigh" };
   let chat = await openPersistentChat(path, models, { defaults: DEFAULT_CHAT_AGENT, onLockLost: lockLost });
   try {
     assert.deepEqual((await chat.conversation.agent(context)).model, DEFAULT_CHAT_AGENT.model);
+    assert.equal((await chat.conversation.agent(context)).thinkingLevel, "medium");
+    const input = await chat.conversation.submit({ type: "input", content: "Offline medium test." }, context);
+    assert.equal((await input.wait(context)).status, "done"); assert.equal(reasoning, "medium");
+    await chat.conversation.configure({ thinkingLevel: "max" }, context);
+    await chat.close();
+    chat = await openPersistentChat(path, models, { defaults: DEFAULT_CHAT_AGENT, onLockLost: lockLost });
     assert.equal((await chat.conversation.agent(context)).thinkingLevel, "max");
-    const input = await chat.conversation.submit({ type: "input", content: "Offline max test." }, context);
-    assert.equal((await input.wait(context)).status, "done"); assert.equal(reasoning, "max");
     await chat.close();
     chat = await openPersistentChat(path, models, { defaults: { model: { provider: DEFAULT_CHAT_AGENT.model.provider, modelId: "small" }, thinkingLevel: "off" }, onLockLost: lockLost });
     assert.deepEqual((await chat.conversation.agent(context)).model, DEFAULT_CHAT_AGENT.model);
@@ -148,7 +152,7 @@ test("switching an older OpenAI session to Codex is explicit and preserves its c
     assert.deepEqual((await chat.conversation.agent(context)).model, oldModel); await chat.close();
     chat = await openPersistentChat(path, old.models, { ...DEFAULT_CHAT_AGENT, onLockLost: lockLost });
     assert.deepEqual((await chat.conversation.agent(context)).model, DEFAULT_CHAT_AGENT.model);
-    assert.equal((await chat.conversation.agent(context)).thinkingLevel, "max");
+    assert.equal((await chat.conversation.agent(context)).thinkingLevel, "medium");
     const second = await chat.conversation.submit({ type: "input", content: "Codex prompt." }, context);
     assert.equal((await second.wait(context)).status, "done");
     const entries = (await chat.conversation.context(context)).entries;

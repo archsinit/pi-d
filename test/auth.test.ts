@@ -79,7 +79,7 @@ test("OpenAI is OAuth-only even with ambient or explicit API keys, and failed re
   }
 });
 
-test("native Codex builds gpt-6.1-sol/max with subscription fields, stopped before any network request", async () => {
+for (const reasoning of ["medium", "max"] as const) test(`native Codex builds gpt-6.1-sol/${reasoning} with subscription fields, stopped before any network request`, async () => {
   const { directory, credentials } = await temporary();
   try {
     await credentials.modify("openai-codex", async () => credential);
@@ -90,14 +90,14 @@ test("native Codex builds gpt-6.1-sol/max with subscription fields, stopped befo
     assert.equal(model.thinkingLevelMap?.max, "max");
     let payload: unknown, fetches = 0;
     const result = await models.completeSimple(model, { messages: [{ role: "user", content: "Offline payload test.", timestamp: Date.now() }] }, {
-      reasoning: DEFAULT_CHAT_AGENT.thinkingLevel, transport: "sse",
+      reasoning: reasoning === "medium" ? DEFAULT_CHAT_AGENT.thinkingLevel : reasoning, transport: "sse",
       fetch: async () => { fetches++; throw new Error("Network forbidden."); },
       onPayload: (value) => { payload = value; throw new Error("Stopped before network."); },
     });
     assert.equal(result.stopReason, "error");
     assert.match(result.errorMessage ?? "", /Stopped before network/);
     const body = payload as { model: string; reasoning: { effort: string }; max_output_tokens?: number; temperature?: number };
-    assert.equal(body.model, "gpt-6.1-sol"); assert.equal(body.reasoning.effort, "max");
+    assert.equal(body.model, "gpt-6.1-sol"); assert.equal(body.reasoning.effort, reasoning);
     assert.equal(body.max_output_tokens, undefined); assert.equal(body.temperature, undefined);
     assert.equal(fetches, 0);
   } finally { await rm(directory, { recursive: true, force: true }); }

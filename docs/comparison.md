@@ -89,7 +89,7 @@ Neither runtime promises exactly-once model requests or external effects.
 
 | Area | pi 1.2.0 | pi-d |
 | --- | --- | --- |
-| Model defaults | User/project defaults, automatic selection and per-model thinking preferences | New-session default `openai-codex/gpt-6.1-sol`, literal `max`; saved settings survive resume. Entitlement depends on the provider |
+| Model defaults | User/project defaults, automatic selection and per-model thinking preferences | New-session default `openai-codex/gpt-6.1-sol`, `medium` reasoning; saved settings survive resume. Entitlement depends on the provider |
 | Model selection | Exact/fuzzy matching, globs, scopes/cycling, `:<thinking>` suffix | Exact `provider/model-id`, filterable `/model`, separate `--thinking` or `/reasoning`; no fuzzy CLI aliases, scopes/cycling or suffix syntax |
 | Thinking validation | CLI thinking is clamped to model capabilities | Unsupported values are rejected. A different model clears the old setting unless explicitly supplied; the same model preserves it |
 | Changing settings | Pi runtime's mutation rules | Model, reasoning, workspace, reset, session and logout changes refuse unfinished foreground or background work |

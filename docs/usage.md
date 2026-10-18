@@ -78,18 +78,18 @@ Both `openai` and `openai-codex` require subscription login. **Missing credentia
 `openai` and `openai-codex` use different credentials and endpoints. Older credentials and metadata remain separate; pi-d never relabels or reuses them across providers or silently changes a saved model. To switch an idle older session without erasing history:
 
 ```sh
-pi-d --model openai-codex/gpt-6.1-sol --thinking max
+pi-d --model openai-codex/gpt-6.1-sol --thinking medium
 ```
 
 If unfinished old work blocks switching and cannot be stopped under its original credentials, keep that store closed and use a separate `--session ./codex.sqlite`. `/interrupt` can stop paused foreground recovery, but background work has separate ownership and cancellation rules.
 
 ## Models and reasoning
 
-New sessions default to `openai-codex/gpt-6.1-sol` and literal `max` reasoning in the pinned 1.2.0 catalog. The Codex payload maps this to `reasoning.effort: "max"`, not `xhigh`. Account entitlement still needs live verification.
+New sessions default to `openai-codex/gpt-6.1-sol` and `medium` reasoning in the pinned 1.2.0 catalog. The Codex payload uses `reasoning.effort: "medium"`. Explicit `max` remains supported and maps to `reasoning.effort: "max"`, not `xhigh`. Account entitlement still needs live verification.
 
 ```sh
 pi-d --list-models
-pi-d --model openai-codex/gpt-6.1-sol --thinking max
+pi-d --model openai-codex/gpt-6.1-sol --thinking medium
 pi-d --session ./notes.sqlite --model anthropic/claude-opus-4-7
 ```
 

@@ -12,7 +12,7 @@ import { LoadedExtensions } from "./status.ts";
 import { modelReadinessGate } from "./model-readiness.ts";
 
 export const DEFAULT_CHAT_AGENT = {
-  model: { provider: "openai-codex", modelId: "gpt-6.1-sol" }, thinkingLevel: "max",
+  model: { provider: "openai-codex", modelId: "gpt-6.1-sol" }, thinkingLevel: "medium",
 } satisfies { model: ModelRef; thinkingLevel: ModelThinkingLevel };
 
 export function parseThinking(value: string): ModelThinkingLevel {

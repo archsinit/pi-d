@@ -51,7 +51,7 @@ export async function loginSubscription(
         return reader.question(`${safeText(prompt.message)}\n> `, { signal });
       },
     });
-    line("\nChatGPT connected. Run pi-d --model openai-codex/gpt-6.1-sol --thinking max.");
+    line("\nChatGPT connected. Run pi-d --model openai-codex/gpt-6.1-sol --thinking medium.");
   } finally {
     for (const signal of signals) process.off(signal, cancel);
     reader.close();

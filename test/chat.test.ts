@@ -126,6 +126,6 @@ test("CLI rejects noninteractive runs and demo/storage combinations without open
   }
   const help = spawnSync(process.execPath, ["--disable-warning=ExperimentalWarning", "src/cli.ts", "--help"], { encoding: "utf8" });
   assert.equal(help.status, 0);
-  for (const text of ["--session", "--login", "--thinking", "/new", "/clear", "/help", "openai-codex/gpt-6.1-sol", "max reasoning", "never OPENAI_API_KEY"]) assert(help.stdout.includes(text));
+  for (const text of ["--session", "--login", "--thinking", "/new", "/clear", "/help", "openai-codex/gpt-6.1-sol", "medium reasoning", "never OPENAI_API_KEY"]) assert(help.stdout.includes(text));
   assert(!help.stdout.includes("Ctrl+N"));
 });

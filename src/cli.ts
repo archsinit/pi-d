@@ -35,7 +35,7 @@ Usage: pi-d [options]
   --no-animation         Disable activity animation
   -h, --help             Show this help
 
-New-session default: openai-codex/gpt-6.1-sol · max reasoning. Saved settings are retained.
+New-session default: openai-codex/gpt-6.1-sol · medium reasoning. Saved settings are retained.
 No selector keeps the existing shared default.sqlite; it is never silently migrated.
 Sessions: $XDG_DATA_HOME/pi-d or ~/.local/share/pi-d; managed sessions live under sessions/.
 OpenAI uses ChatGPT subscription login only, never OPENAI_API_KEY.

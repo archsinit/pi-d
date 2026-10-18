@@ -61,7 +61,7 @@ test("stock browser login uses Pi's fixed Codex client, not named-agent registra
     const saved = await credentials.read("openai-codex") as OAuthCredential;
     assert.equal(saved.access, subscriptionCredential.access); assert.equal(saved.accountId, "test-account");
     assert.equal(await credentials.read("openai"), undefined);
-    assert(text.includes("openai-codex/gpt-6.1-sol --thinking max"));
+    assert(text.includes("openai-codex/gpt-6.1-sol --thinking medium"));
     assert(!text.includes(subscriptionCredential.access)); assert(!text.includes(subscriptionCredential.refresh));
     assert(!text.includes("test-native-code"));
   } finally {
