@@ -230,6 +230,8 @@ The native store is authoritative. The Harness, registry and built-in tasks run 
 
 Automatic/background compaction uses upstream defaults: reserve 16,384 response tokens, retain about 20,000 recent tokens and start summarization 32,768 tokens below the blocking threshold (`contextWindow - reserveTokens`). Background compaction leaves the composer available, and ordinary Escape does not cancel it. There is no manual `/compact` command.
 
+The saved summary appears inline under **◇ Compaction summary**, rendered as Markdown rather than a message from you. It is at the start of active context; use Ctrl+Home to reach it when following newer messages. It remains visible after reopening while that compaction is the active head. This is display-only: the stored summary and model context are unchanged.
+
 The display follows active context. Reset and compaction keep earlier stored entries, but there is no archive browser or export. The picker selects databases, not hidden messages.
 
 ### Recovery and ownership

@@ -10,7 +10,7 @@ The upstream Harness runs unchanged. pi-d adds the fullscreen interface, session
 
 Offline renderer capture with scripted output.
 
-- **Automatic background context compaction.** Enabled by default through pi-durable: older context is summarized while chat can continue. Recent messages stay in context; earlier entries remain saved in SQLite. [Details](docs/usage.md#compaction-and-history).
+- **Automatic background context compaction.** Enabled by default through pi-durable: older context is summarized while chat can continue. The saved summary is shown inline under **◇ Compaction summary**. Recent messages stay in context; earlier entries remain saved in SQLite. [Details](docs/usage.md#compaction-and-history).
 - Watch answers, provider-exposed thinking and tool output as they stream.
 - Review tool failures and committed edit patches in the conversation.
 - Keep separate project sessions with saved models, reasoning levels and workspaces.

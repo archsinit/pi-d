@@ -37,6 +37,7 @@ type BodyBlock = { kind: "text" | "thinking" | "patch"; body: Component } | { ki
 export class Transcript implements Component {
   view: ConversationView | undefined;
   private readonly bodies = new WeakMap<object, BodyBlock[]>();
+  private readonly summaries = new WeakMap<object, Component>();
   private cachedView: ConversationView | undefined;
   private cachedWidth = -1;
   private lines: string[] = [];
@@ -75,11 +76,21 @@ export class Transcript implements Component {
     appendExtensions(undefined);
     for (const entry of entries) {
       if (entry.kind === "pi.compaction") {
-        rows.push(paint("◇ compacted", "dim"), "");
-      }
-      for (const message of entry.model ?? []) {
-        if (message.role === "system") continue;
-        this.appendMessage(rows, message, column, false, entry.kind === COMPLETION_ENTRY ? "◇ Subagent completion" : undefined);
+        let body = this.summaries.get(entry);
+        if (!body) {
+          const text = (entry.model ?? []).map(messageText).join("\n\n");
+          // Unwrap stock Durable's summary envelope for display only; preserve unfamiliar formats.
+          const summary = text.match(/^The conversation history before this point was compacted into the following summary:\n\n<summary>\n([\s\S]*)\n<\/summary>$/)?.[1] ?? text;
+          body = new Markdown(safeText(summary), 0, 0, markdownTheme, { color: (s) => paint(s) });
+          this.summaries.set(entry, body);
+        }
+        rows.push(...new Text(paint("◇ Compaction summary", "green", true), 0, 0).render(column));
+        rows.push(...body.render(column), "");
+      } else {
+        for (const message of entry.model ?? []) {
+          if (message.role === "system") continue;
+          this.appendMessage(rows, message, column, false, entry.kind === COMPLETION_ENTRY ? "◇ Subagent completion" : undefined);
+        }
       }
       appendExtensions(entry.id);
     }

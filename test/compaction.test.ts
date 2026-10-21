@@ -7,9 +7,11 @@ import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import type { TranscriptContext } from "@earendil-works/pi-ai";
 import { getCurrentSystemPrompt } from "@earendil-works/pi-ai/utils/transcript";
 import { fauxAssistantMessage } from "@earendil-works/pi-ai/providers/faux";
+import { stripTerminalSequences } from "@earendil-works/pi-tui";
 import {
   CompactionEntry, createRegistry, DEFAULT_COMPACTION_POLICY, Harness, LiveDoc, MemoryStorage,
 } from "@earendil-works/pi-durable";
+import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
 import { mountChat } from "../src/chat.ts";
 import { codingEnv, codingRegistry } from "../src/coding.ts";
 import { chatCommands } from "../src/commands.ts";
@@ -90,11 +92,54 @@ test("native background compaction overlaps chat, keeps the composer usable, pla
     await rm(agents); await ask("After deleting the instructions file.");
     assert(!getCurrentSystemPrompt(requests.at(-1)!.messages).includes("AGENTS-V"), "Deleted instructions must leave the effective prompt, whether native placement emitted a patch or a new baseline.");
     await terminal.flush(); assert.equal(app.ui.busy, false);
-    assert.match(app.ui.transcript.render(76).join("\n"), /LOCAL-COMPACTION-MESSAGE/);
+    const rendered = app.ui.transcript.render(76).map(stripTerminalSequences).join("\n");
+    assert.match(rendered, /LOCAL-COMPACTION-MESSAGE/);
+    assert.match(rendered, /◇ Compaction summary/); assert.match(rendered, /Background summary completed/);
+    assert(!rendered.includes("<summary>"));
     assert.match(terminal.text(), /LOCAL-COMPACTION-TOAST/);
     assert(!JSON.stringify(requests).includes("LOCAL-COMPACTION"));
     assert(!JSON.stringify((await conversation.entries({}, 100, undefined, context)).items).includes("LOCAL-COMPACTION"));
   } finally { gate.resolve(); await app.close(); terminal.dispose(); await rm(directory, { recursive: true, force: true }); }
+});
+
+test("a native compaction summary reopens from SQLite, is reachable with Ctrl+Home, and needs no new model request", { timeout: 10000 }, async () => {
+  const directory = await mkdtemp(join(tmpdir(), "pi-d-compaction-reopen-")), file = join(directory, "session.sqlite");
+  let modelCalls = 0;
+  const summary = "## Goal\nREOPENED-SUMMARY\n\n## Progress\nSaved summary remains readable.";
+  const { models } = testModels({ responses: ["a".repeat(800), "b".repeat(800), summary, "Unexpected request."].map((answer) => () => {
+    modelCalls++; return fauxAssistantMessage(answer);
+  }) });
+  const options = { models, registry: createRegistry(), settings: { compaction: { enabled: false, keepRecentTokens: 100 } } };
+  let harness = await Harness.open(await openNodeSqliteStorage(file), options, context);
+  const terminal = new TestTerminal(80, 20);
+  let app: Awaited<ReturnType<typeof mountChat>> | undefined;
+  try {
+    let conversation = await harness.root(context, { agent: { model } });
+    for (let i = 0; i < 2; i++) {
+      const input = await conversation.submit({ type: "input", content: `History ${i}. ` + "history ".repeat(100) }, context);
+      assert.equal((await input.wait(context)).status, "done");
+    }
+    const task = await conversation.compact(undefined, context), outcome = (await harness.waitForTask(task, context)).state.outcome;
+    assert(outcome.status === "completed" && outcome.result.submissionId);
+    const placement = await harness.submission(outcome.result.submissionId, context); assert(placement);
+    assert.equal((await placement.wait(context)).status, "done");
+    assert.equal(modelCalls, 3);
+    const before = await conversation.context(context), usage = await harness.usage(context);
+    assert(CompactionEntry.is(before.head));
+    await harness.close(context);
+    harness = await Harness.open(await openNodeSqliteStorage(file), options, context);
+    conversation = await harness.root(context);
+    app = await mountChat({ harness, conversation, label: "offline", close: () => harness.close(context) }, terminal, false);
+    await terminal.flush(); assert(app.ui.scroll.scrollTop > 0);
+    terminal.send("\x1b[1;5H"); await terminal.flush();
+    assert.equal(app.ui.scroll.scrollTop, 0); assert.match(terminal.text(), /◇ Compaction summary/); assert.match(terminal.text(), /REOPENED-SUMMARY/);
+    const rendered = app.ui.transcript.render(76).map(stripTerminalSequences).join("\n");
+    assert.equal((rendered.match(/REOPENED-SUMMARY/g) ?? []).length, 1);
+    const userMessages = before.entries.filter((entry) => !CompactionEntry.is(entry)).flatMap((entry) => entry.model ?? []).filter((message) => message.role === "user").length;
+    assert.equal((rendered.match(/❯ You/g) ?? []).length, userMessages);
+    assert.equal(modelCalls, 3); assert.deepEqual(await conversation.context(context), before); assert.deepEqual(await harness.usage(context), usage);
+    const inspection = await harness.inspect(context); assert.equal(inspection.tasks.length, 0); assert.equal(inspection.submissions.length, 0);
+  } finally { if (app) await app.close(); else await harness.close(context); terminal.dispose(); await rm(directory, { recursive: true, force: true }); }
 });
 
 test("manual compaction blocks submission and a failed summary remains visible without disabling chat", { timeout: 10000 }, async () => {

@@ -3,7 +3,7 @@ import test from "node:test";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import { Type } from "@earendil-works/pi-ai";
 import { fauxAssistantMessage, fauxText, fauxThinking, fauxToolCall } from "@earendil-works/pi-ai/providers/faux";
-import { createRegistry, defineExtension, defineTool, Harness, LiveDoc, MemoryStorage } from "@earendil-works/pi-durable";
+import { CompactionEntry, createRegistry, defineExtension, defineTool, Harness, LiveDoc, MemoryStorage } from "@earendil-works/pi-durable";
 import { getCapabilities, setCapabilities, stripTerminalSequences, visibleWidth } from "@earendil-works/pi-tui";
 import { ChatUI } from "../src/ui.ts";
 import { model, testModels } from "./models.ts";
@@ -119,6 +119,45 @@ test("live tool output is nested like settled output, and tool-only rounds do no
     assert.equal((ui.transcript.render(96).map(stripTerminalSequences).join("\n").match(/● Assistant/g) ?? []).length, 1);
   } finally { gate.resolve(); await watch.stop(); ui.stop(); terminal.dispose(); await harness.close(context); }
 });
+
+for (const format of ["text", "blocks", "unwrapped"] as const) {
+  test(`compaction summaries (${format}) are labeled Markdown, wrapped, sanitized and selectable without changing native state`, async () => {
+    const summary = "## Goal\nSUMMARY-COPY\n\n- Keep **important context**.\n\n```ts\nconst saved = true;\n```\n\n你好 👩🏽‍💻 " + "wrapped text ".repeat(12) + "\nLAST-LINE\x1b[2J\x1b]52;c;SECRET\x07";
+    const wrapped = format === "unwrapped" ? summary : `The conversation history before this point was compacted into the following summary:\n\n<summary>\n${summary}\n</summary>`;
+    const { models } = testModels();
+    const harness = await Harness.open(new MemoryStorage(), { models, registry: createRegistry() }, context);
+    const conversation = await harness.root(context, { agent: { model } });
+    const terminal = new TestTerminal(80, 30), ui = new ChatUI(terminal, { animate: false });
+    try {
+      await conversation.commit((tx) => tx.appendEntry(CompactionEntry, conversation.id, {
+        head: "self", data: { reason: "threshold" },
+        model: [{ role: "user", content: format === "blocks" ? [fauxText(wrapped)] : wrapped, timestamp: 0 }],
+      }), context);
+      const state = await conversation.viewState(context); ui.setView(state.value); state.dispose();
+      const before = JSON.stringify({ context: await conversation.context(context), usage: await harness.usage(context), inspection: await harness.inspect(context) });
+      ui.start();
+      for (const columns of [40, 80, 160, 40]) {
+        terminal.resize(columns, 30); ui.scroll.scrollToStart(); await terminal.flush();
+        const lines = ui.transcript.render(columns - 4), text = lines.map(stripTerminalSequences).join("\n");
+        assert.match(text, /◇ Compaction summary/);
+        for (const value of ["SUMMARY-COPY", "important context", "const saved = true;", "LAST-LINE"]) assert(text.includes(value), value);
+        assert(!/❯ You|● Assistant|<\/?summary>|compacted into the following|SECRET|## Goal|\*\*important/.test(text));
+        assert.equal((text.match(/SUMMARY-COPY/g) ?? []).length, 1);
+        assert(lines.every((line) => visibleWidth(line) <= columns - 4 && !/[\r\n]/.test(line)));
+        assert.strictEqual(ui.transcript.render(columns - 4), lines);
+        assert.match(terminal.text(), /Compaction summary/); assert(ui.composer.focused);
+      }
+      const screen = terminal.text().split("\n"), y = screen.findIndex((line) => line.includes("SUMMARY-COPY"));
+      assert(y >= 0); const x = screen[y].indexOf("SUMMARY-COPY");
+      terminal.send(`\x1b[<0;${x + 1};${y + 1}M`);
+      terminal.send(`\x1b[<32;${x + "SUMMARY-COPY".length};${y + 1}M`);
+      terminal.send(`\x1b[<0;${x + "SUMMARY-COPY".length};${y + 1}m`);
+      await terminal.flush(); assert(ui.tui.hasActiveSelection()); assert(ui.composer.focused);
+      assert(terminal.output.includes(`\x1b]52;c;${Buffer.from("SUMMARY-COPY").toString("base64")}\x07`));
+      assert.equal(JSON.stringify({ context: await conversation.context(context), usage: await harness.usage(context), inspection: await harness.inspect(context) }), before);
+    } finally { ui.stop(); terminal.dispose(); await harness.close(context); }
+  });
+}
 
 test("failed tool headers and error output are visible rather than collapsed", async () => {
   const { harness, conversation, input } = await fixture({ failed: true });
