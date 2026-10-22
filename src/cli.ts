@@ -1,6 +1,7 @@
 import { basename, dirname, join } from "node:path";
 import { parseArgs } from "node:util";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
+import { cleanupSessionResources } from "@earendil-works/pi-ai";
 import { builtinModels } from "@earendil-works/pi-ai/providers/all";
 import { ProcessTerminal } from "@earendil-works/pi-tui";
 import { chatModels, credentialFile, SubscriptionCredentials } from "./auth.ts";
@@ -159,4 +160,6 @@ async function main(): Promise<void> {
   }
 }
 
-await main().catch((error) => { console.error(`pi-d: ${errorText(error)}`); process.exitCode = 1; });
+// This process owns all provider sessions. Release cached transports only after native shutdown,
+// never on individual chat close: session switching may already have opened the next chat.
+await main().finally(() => cleanupSessionResources()).catch((error) => { console.error(`pi-d: ${errorText(error)}`); process.exitCode = 1; });
